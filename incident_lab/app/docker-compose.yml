@@ -1,0 +1,97 @@
+name: sev0-lab
+
+x-service: &service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment: &service-env
+    LOG_LEVEL: INFO
+    CATALOG_URL: http://catalog:8001
+    CART_URL: http://cart:8002
+    PAYMENTS_URL: http://payments:8003
+    GATEWAY_URL: http://gateway:8000
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: storefront
+      POSTGRES_PASSWORD: storefront
+      POSTGRES_DB: storefront
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U storefront"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  catalog:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE_NAME: catalog
+      SERVICE_MODULE: services.catalog.main:app
+      PORT: 8001
+    ports:
+      - "8001:8001"
+
+  cart:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE_NAME: cart
+      SERVICE_MODULE: services.cart.main:app
+      PORT: 8002
+      DATABASE_URL: postgresql://storefront:storefront@postgres:5432/storefront
+      DB_POOL_MAX_SIZE: 10
+      DB_POOL_TIMEOUT: 5
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog:
+        condition: service_started
+
+  payments:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE_NAME: payments
+      SERVICE_MODULE: services.payments.main:app
+      PORT: 8003
+      PAYMENTS_DECLINE_RATE: 0.02
+    ports:
+      - "8003:8003"
+
+  gateway:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE_NAME: gateway
+      SERVICE_MODULE: services.gateway.main:app
+      PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - cart
+      - catalog
+      - payments
+
+  loadgen:
+    <<: *service
+    environment:
+      <<: *service-env
+      SERVICE_NAME: loadgen
+      LOADGEN_RPS: 4
+      LOADGEN_CONCURRENCY: 4
+    command: ["python", "-m", "loadgen.main"]
+    depends_on:
+      - gateway
+
+volumes:
+  pgdata:
