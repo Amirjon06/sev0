@@ -15,6 +15,17 @@ Format:
 
 ---
 
+## 2026-08-17 — Demo storefront running
+
+**Tried:** Built the Phase 1 target application: four Python services (gateway,
+catalog, cart, payments) on Postgres, plus a load generator.
+**Result:** Services import and compute correctly; pricing covered by tests.
+Docker Compose brings the whole stack up with one command.
+**Decided:** Payments declines 2% of charges and jitters latency on purpose. A
+flat baseline would make any injected fault trivially detectable and would
+flatter the agent's diagnostic ability. Pricing logic is concentrated in
+`compute_total` so planted faults have one clean home and one clean assertion.
+
 ## 2026-08-17 — Project scaffolded
 
 **Tried:** Established the repository structure, tooling, and Phase 1 plan.
