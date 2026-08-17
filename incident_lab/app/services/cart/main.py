@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
@@ -131,10 +131,11 @@ async def get_cart(user_id: str, promo_code: str | None = None) -> dict[str, obj
     return {"user_id": user_id, "items": rows, "promo_code": promo_code, **totals}
 
 
-@app.delete("/carts/{user_id}", status_code=204)
-async def clear_cart(user_id: str) -> None:
+@app.delete("/carts/{user_id}", status_code=204, response_class=Response)
+async def clear_cart(user_id: str) -> Response:
     with get_pool().connection() as conn:
         conn.execute("DELETE FROM cart_items WHERE user_id = %s", (user_id,))
+    return Response(status_code=204)
 
 
 @app.get("/stats")
