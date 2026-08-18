@@ -16,4 +16,4 @@ COPY loadgen/ ./loadgen/
 ENV SERVICE_MODULE=services.gateway.main:app \
     PORT=8000
 
-CMD ["sh", "-c", "uvicorn $SERVICE_MODULE --host 0.0.0.0 --port $PORT"]
+CMD ["sh", "-c", "uvicorn $SERVICE_MODULE --host 0.0.0.0 --port $PORT --no-access-log"]

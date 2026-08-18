@@ -16,6 +16,26 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+
+REQUESTS = Counter(
+    "http_requests_total",
+    "Total HTTP requests handled",
+    ["service", "method", "route", "status"],
+)
+
+LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "Request duration in seconds",
+    ["service", "method", "route"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+
+IN_FLIGHT = Gauge(
+    "http_requests_in_flight",
+    "Requests currently being handled",
+    ["service"],
+)
 
 
 class JsonFormatter(logging.Formatter):
@@ -51,8 +71,15 @@ def service_url(name: str) -> str:
     return os.environ[f"{name.upper()}_URL"]
 
 
+def route_of(request: Request) -> str:
+    # The templated path, not the concrete one. /carts/{user_id} rather than
+    # /carts/user-0042, or the metric explodes into one series per shopper.
+    route = request.scope.get("route")
+    return getattr(route, "path", "unmatched")
+
+
 def instrument(app: FastAPI, service_name: str) -> None:
-    """Attach request logging and a health endpoint to a service."""
+    """Attach request logging, metrics, and a health endpoint to a service."""
     log = get_logger(service_name)
 
     @app.middleware("http")
@@ -61,10 +88,15 @@ def instrument(app: FastAPI, service_name: str) -> None:
     ) -> Response:
         request_id = request.headers.get("x-request-id", str(uuid.uuid4())[:8])
         started = time.perf_counter()
+        IN_FLIGHT.labels(service_name).inc()
+
         try:
             response = await call_next(request)
         except Exception:
-            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            duration = time.perf_counter() - started
+            route = route_of(request)
+            REQUESTS.labels(service_name, request.method, route, "500").inc()
+            LATENCY.labels(service_name, request.method, route).observe(duration)
             log.exception(
                 "request failed",
                 extra={
@@ -73,13 +105,19 @@ def instrument(app: FastAPI, service_name: str) -> None:
                         "path": request.url.path,
                         "method": request.method,
                         "status": 500,
-                        "duration_ms": duration_ms,
+                        "duration_ms": round(duration * 1000, 2),
                     }
                 },
             )
             raise
+        finally:
+            IN_FLIGHT.labels(service_name).dec()
 
-        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        duration = time.perf_counter() - started
+        route = route_of(request)
+        REQUESTS.labels(service_name, request.method, route, str(response.status_code)).inc()
+        LATENCY.labels(service_name, request.method, route).observe(duration)
+
         level = log.warning if response.status_code >= 500 else log.info
         level(
             "request completed",
@@ -89,7 +127,7 @@ def instrument(app: FastAPI, service_name: str) -> None:
                     "path": request.url.path,
                     "method": request.method,
                     "status": response.status_code,
-                    "duration_ms": duration_ms,
+                    "duration_ms": round(duration * 1000, 2),
                 }
             },
         )
@@ -99,3 +137,7 @@ def instrument(app: FastAPI, service_name: str) -> None:
     @app.get("/healthz", include_in_schema=False)
     async def healthz() -> dict[str, str]:
         return {"status": "ok", "service": service_name}
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
