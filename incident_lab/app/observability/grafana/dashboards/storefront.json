@@ -50,7 +50,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (service) (rate(http_requests_total{status=~\"5..\"}[1m])) / clamp_min(sum by (service) (rate(http_requests_total[1m])), 0.001)",
+          "expr": "(sum by (service) (rate(http_requests_total{status=~\"5..\"}[1m])) or sum by (service) (rate(http_requests_total[1m])) * 0) / clamp_min(sum by (service) (rate(http_requests_total[1m])), 0.001)",
           "legendFormat": "{{service}}"
         }
       ]
@@ -94,7 +94,7 @@
     {
       "id": 5,
       "type": "logs",
-      "title": "Warnings and errors",
+      "title": "Failed requests",
       "datasource": { "type": "loki", "uid": "loki" },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 16 },
       "options": {
@@ -105,7 +105,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{level=~\"WARNING|ERROR\"}"
+          "expr": "{status=~\"4..|5..\"} | json"
         }
       ]
     }
