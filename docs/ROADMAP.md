@@ -83,11 +83,11 @@ Record the GIF for the README here.
 | # | Task | Deliverable |
 | --- | --- | --- |
 | 4.1 | Expand to 15–20 scenarios across code, config, and infra faults | `--suite core` |
-| 4.2 | Scoring harness for the four metrics | `sev0-lab score` |
+| 4.2 | ~~Scoring harness for the four metrics~~ **Done** | `sev0-lab score`, `sev0-lab report` |
 | 4.3 | Deterministic replay so runs are comparable | Seeded, versioned scenarios |
 | 4.4 | Ablation studies (no traces, no git history, smaller model) | Which evidence actually matters |
-| 4.5 | Markdown and HTML scorecards | `sev0-lab report` |
-| 4.6 | Publish results and a write-up | Numbers in the README |
+| 4.5 | ~~Markdown scorecard~~ **Done** — HTML deferred | `runs/scorecard.md` |
+| 4.6 | Publish results and a write-up — **no numbers exist yet** | Numbers in the README |
 
 **Exit criterion:** a table of measured results, and an honest account of the
 failure modes.

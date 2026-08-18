@@ -135,6 +135,38 @@ class RunState:
             raw["verdict"] = hypothesis.verdict.value
         return payload
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> RunState:
+        """Rebuild a run from its saved trace, so old runs can be re-scored."""
+        state = cls(
+            incident=payload["incident"],
+            run_id=payload.get("run_id", ""),
+            started_at=payload.get("started_at", ""),
+            finished_at=payload.get("finished_at"),
+            stopped_because=payload.get("stopped_because"),
+        )
+        state.tool_calls = [ToolCall(**call) for call in payload.get("tool_calls", [])]
+        state.hypotheses = [
+            Hypothesis(
+                statement=raw["statement"],
+                verdict=Verdict(raw["verdict"]),
+                reasoning=raw.get("reasoning", ""),
+                raised_at=raw.get("raised_at", ""),
+            )
+            for raw in payload.get("hypotheses", [])
+        ]
+        if raw_cause := payload.get("root_cause"):
+            state.root_cause = RootCause(
+                **{**raw_cause, "confidence": Confidence(raw_cause["confidence"])}
+            )
+        if raw_fix := payload.get("proposed_fix"):
+            state.proposed_fix = ProposedFix(**raw_fix)
+        return state
+
+    @classmethod
+    def load(cls, trace: Path) -> RunState:
+        return cls.from_dict(json.loads(trace.read_text()))
+
     def save(self, run_dir: Path) -> Path:
         directory = run_dir / self.run_id
         directory.mkdir(parents=True, exist_ok=True)

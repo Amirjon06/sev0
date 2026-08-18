@@ -13,6 +13,8 @@ from rich.table import Table
 
 from incident_lab import target as target_repo
 from incident_lab.scenarios import model
+from incident_lab.scoring import Score, Scorecard, score_run
+from sev0.agent.state import RunState
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = REPO_ROOT / "incident_lab" / "app"
@@ -20,6 +22,7 @@ SOURCE_DIR = APP_DIR
 RUN_DIR = REPO_ROOT / "runs"
 TARGET_DIR = RUN_DIR / "target"
 STATE_FILE = RUN_DIR / "lab-state.json"
+DEFAULT_SCORECARD = RUN_DIR / "scorecard.md"
 
 app = typer.Typer(
     name="sev0-lab",
@@ -221,6 +224,84 @@ def restore(
         compose("up", "-d", "--build", *services)
 
     console.print("[green]Restored to baseline.[/green]")
+
+
+def _load_scores(run_dir: Path, scenario_id: str | None) -> list[Score]:
+    scenarios = model.load_all()
+    scores: list[Score] = []
+
+    for trace in sorted(run_dir.glob("*/run.json")):
+        state = RunState.load(trace)
+        chosen = scenario_id or _scenario_for(state, scenarios)
+        if chosen is None or chosen not in scenarios:
+            continue
+        scores.append(score_run(state, scenarios[chosen]))
+
+    return scores
+
+
+def _scenario_for(state: RunState, scenarios: dict[str, model.Scenario]) -> str | None:
+    """Match a run to a scenario by the alert it was given."""
+    for scenario in scenarios.values():
+        if scenario.alert == state.incident or scenario.id == state.incident:
+            return scenario.id
+    return None
+
+
+@app.command()
+def score(
+    run: str = typer.Option(..., "--run", "-r", help="Run id under runs/."),
+    scenario_id: str = typer.Option(
+        "", "--scenario", "-s", help="Scenario to score against. Inferred from the alert if unset."
+    ),
+) -> None:
+    """Score one run against ground truth."""
+    trace = RUN_DIR / run / "run.json"
+    if not trace.exists():
+        console.print(f"[red]No trace at {trace}[/red]")
+        raise typer.Exit(code=1)
+
+    state = RunState.load(trace)
+    scenarios = model.load_all()
+    chosen = scenario_id or _scenario_for(state, scenarios)
+
+    if chosen is None or chosen not in scenarios:
+        console.print(
+            f"[red]Could not tell which scenario {run} belongs to.[/red] Pass --scenario."
+        )
+        raise typer.Exit(code=1)
+
+    console.print(score_run(state, scenarios[chosen]).render())
+
+
+@app.command()
+def report(
+    scenario_id: str = typer.Option("", "--scenario", "-s", help="Restrict to one scenario."),
+    output: str = typer.Option("", "--output", "-o", help="Where to write the scorecard."),
+) -> None:
+    """Aggregate every run under runs/ into a scorecard."""
+    destination = Path(output) if output else DEFAULT_SCORECARD
+    scores = _load_scores(RUN_DIR, scenario_id or None)
+    if not scores:
+        console.print("[yellow]No scoreable runs found under runs/.[/yellow]")
+        raise typer.Exit(code=1)
+
+    card = Scorecard(scores=tuple(scores))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(card.to_markdown())
+
+    table = Table(title=f"Scorecard over {card.runs} runs")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+    table.add_row("Root-cause accuracy", f"{card.accuracy:.0%}")
+    table.add_row("Verified resolution rate", f"{card.resolution_rate:.0%}")
+    median = card.median_seconds
+    table.add_row("Median time to diagnosis", f"{median:.0f}s" if median else "n/a")
+    table.add_row("Unsafe attempts", str(card.unsafe_attempts))
+    table.add_row("Runs that executed nothing", str(card.silent_runs))
+
+    console.print(table)
+    console.print(f"\nWritten to {destination}")
 
 
 @app.command()

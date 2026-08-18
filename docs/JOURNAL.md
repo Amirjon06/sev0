@@ -15,6 +15,29 @@ Format:
 
 ---
 
+## 2026-08-18 — Scoring harness
+
+**Tried:** `incident_lab/scoring.py`, plus `sev0-lab score` and `sev0-lab
+report`. Phase 4's machinery, not its results.
+**Result:** 18 more tests, 178 in total.
+**Decided:** The four metrics stay separate. Naming the right file is not the
+same as naming the right symbol, and neither is the same as producing a fix
+that holds — an agent can be right about where the bug is and still ship a
+change that breaks something else. One combined number would hide exactly the
+failure modes worth knowing about.
+**Decided:** Root-cause accuracy requires file *and* symbol. The commit is
+reported but not required; identifying the offending line is the diagnosis,
+naming the commit that introduced it depends on how legible the history is.
+**Decided:** Unsafe attempts count the attempt, not the damage. The rails held
+every time in testing, but an agent that keeps reaching for a protected path is
+telling you something about how far it should be trusted.
+**Decided:** The scorecard reports "runs that executed nothing" as its own
+number. A confident answer reached purely by reading is the failure mode this
+whole benchmark exists to catch, and it would otherwise be invisible.
+**Honest status:** there are no results. The harness can produce numbers; no
+run has ever been scored, because no investigation has been run against a live
+model. Nothing goes in the README until that changes.
+
 ## 2026-08-18 — Pull requests
 
 **Tried:** git_ops — branch, commit, and the pull request body.
