@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY services/ ./services/
 COPY loadgen/ ./loadgen/
+COPY tests/ ./tests/
 
 ENV SERVICE_MODULE=services.gateway.main:app \
     PORT=8000

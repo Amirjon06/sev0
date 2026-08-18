@@ -15,6 +15,29 @@ Format:
 
 ---
 
+## 2026-08-18 — Sandbox and verification
+
+**Tried:** Built the sandbox, the patch limits, and the verifier. No API credit
+yet, so this is the half of Phase 3 that needs no model.
+**Result:** 26 more tests, 122 in total. All of it runs against a local runner
+so CI needs no Docker daemon.
+**Decided:** Reproduce before patching, always. If the suite is already green
+then whatever was found is not what broke production, and applying a patch
+would mean changing working code to fit a story. The verifier refuses to call
+anything verified unless the failure was demonstrably present first.
+**Decided:** A patch that breaks a limit does not get to run code just to find
+out whether it would have worked. Validation happens before the scratch copy is
+even made, and again inside apply() — between a check and a write the tree can
+move, and the limits have to hold regardless of call order.
+**Decided:** Everything happens in a throwaway copy. The repository under
+investigation is never modified, so a run that dies halfway leaves nothing.
+**Needed:** the storefront now carries its own test suite. Verification has to
+run something, and a suite that lives in the sev0 repo cannot travel with the
+target the agent is investigating.
+**Caught by a test I wrote badly:** my own "harmless" patch used an anchor that
+matched twice, and the ambiguity rule rejected it. The rule was right and the
+test was wrong — an edit that matches in two places is not a deliberate edit.
+
 ## 2026-08-18 — The agent investigates
 
 **Tried:** Code retrieval, the toolbox, and the investigation loop. `sev0

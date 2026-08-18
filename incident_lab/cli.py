@@ -70,8 +70,15 @@ def ensure_target() -> Path:
 @app.command()
 def up(
     rebuild: bool = typer.Option(True, "--build/--no-build", help="Rebuild service images."),
+    fresh: bool = typer.Option(
+        False, "--fresh", help="Discard and recreate the target repository first."
+    ),
 ) -> None:
     """Start the storefront and its observability stack."""
+    if fresh:
+        console.print("Recreating target repository ...")
+        target_repo.materialize(SOURCE_DIR, TARGET_DIR, force=True)
+        clear_state()
     ensure_target()
     args = ["up", "-d"]
     if rebuild:

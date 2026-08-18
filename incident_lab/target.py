@@ -15,7 +15,7 @@ from pathlib import Path
 
 BASELINE_TAG = "baseline"
 
-SOURCE_ENTRIES = ("services", "loadgen", "requirements.txt", "Dockerfile")
+SOURCE_ENTRIES = ("services", "loadgen", "tests", "requirements.txt", "Dockerfile")
 
 # Committed in this order to build a plausible history. Each stage is a real
 # diff, so `git log -p` and `git bisect` behave the way they would on a project
@@ -48,6 +48,10 @@ HISTORY: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "test(loadgen): Drive baseline shopper traffic",
         ("loadgen",),
+    ),
+    (
+        "test(cart): Cover promotions and order totals",
+        ("tests",),
     ),
 )
 

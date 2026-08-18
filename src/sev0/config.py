@@ -35,6 +35,9 @@ class Settings(BaseSettings):
 
     # Sandbox
     sandbox_runtime: str = "docker"
+    # The storefront image already carries the app dependencies and pytest,
+    # so verification runs in it rather than a bare python image.
+    sandbox_image: str = "sev0-lab-cart:latest"
     sandbox_timeout_seconds: int = 600
     sandbox_network: str = "none"
 
