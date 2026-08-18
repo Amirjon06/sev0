@@ -13,7 +13,9 @@ from sev0.agent.tools import Toolbox
 from sev0.collectors.logs import LokiCollector
 from sev0.collectors.metrics import PrometheusCollector
 from sev0.config import Settings, load_settings
-from sev0.sandbox.patch import PatchLimits
+from sev0.git_ops import pull_request as pr
+from sev0.git_ops import repository as repo_ops
+from sev0.sandbox.patch import PatchBuilder, PatchLimits
 from sev0.sandbox.runner import DockerSandbox, LocalSandbox, Sandbox
 
 app = typer.Typer(
@@ -119,6 +121,62 @@ def _build_client() -> object:
         raise typer.Exit(code=1) from None
 
 
+def _raise_pull_request(state: RunState, settings: Settings) -> None:
+    """Turn a verified fix into a branch, a commit, and a reviewable body."""
+    fix = state.proposed_fix
+    if fix is None or not fix.verified:
+        console.print(
+            "[yellow]No verified fix, so nothing is being proposed.[/yellow] "
+            "sev0 does not open pull requests for changes it could not prove."
+        )
+        return
+
+    patch = PatchBuilder(rationale=fix.rationale).edit(fix.path, fix.find, fix.replace).build()
+    branch = repo_ops.branch_name(state.incident, state.run_id)
+    service = state.root_cause.service if state.root_cause else ""
+
+    try:
+        commit = repo_ops.commit_fix(
+            settings.target_repo,
+            patch,
+            branch=branch,
+            subject=repo_ops.commit_subject(service, fix.rationale),
+            body=f"Investigated by sev0 as run {state.run_id}.",
+            base_branch=settings.base_branch,
+            limits=_limits(settings),
+        )
+        diff = repo_ops.diff_against(settings.target_repo, settings.base_branch)
+    except repo_ops.GitOpsError as exc:
+        console.print(f"[red]Could not commit the fix:[/red] {exc}")
+        return
+
+    request = pr.build(
+        state,
+        branch=commit.branch,
+        base=settings.base_branch,
+        diff=diff,
+        trace_path=str(settings.run_dir / state.run_id / "run.json"),
+    )
+
+    destination = settings.run_dir / state.run_id / "pull_request.md"
+    destination.write_text(f"# {request.title}\n\n{request.body}\n")
+
+    console.print(f"\nCommitted [bold]{commit.sha}[/bold] on {commit.branch}")
+    console.print(f"Pull request body written to {destination}")
+
+    if not settings.repo:
+        console.print("SEV0_REPO is not set, so nothing was opened on GitHub.")
+        return
+
+    try:
+        opened = pr.open_on_github(request, repository=settings.repo, draft=True)
+    except pr.PullRequestError as exc:
+        console.print(f"[yellow]Not opened on GitHub:[/yellow] {exc}")
+        return
+
+    console.print(f"Opened as a draft: {opened.url}")
+
+
 @app.command()
 def investigate(
     incident: str = typer.Option(..., "--incident", "-i", help="Incident identifier or alert."),
@@ -158,8 +216,11 @@ def investigate(
     console.print(state.summary())
     console.print(f"\nTrace written to {trace}")
 
-    if not dry_run:
-        console.print("[yellow]Repair and pull requests arrive in Phase 3.[/yellow]")
+    if dry_run:
+        if state.proposed_fix is not None and state.proposed_fix.verified:
+            console.print("\n[green]A verified fix is ready.[/green] Re-run with --no-dry-run.")
+    else:
+        _raise_pull_request(state, settings)
 
     raise typer.Exit(code=0 if state.root_cause else 1)
 

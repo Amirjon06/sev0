@@ -64,12 +64,13 @@ end to end, without hints. Blocked on API credit, not on code.
 | 3.2 | ~~Failure reproduction: confirm the bug before patching~~ **Done** | A green suite means the failure did not reproduce |
 | 3.3 | ~~Patch proposal bounded by the diff limits~~ **Done** | `try_patch` verifies or refuses; oversized patches never run |
 | 3.4 | ~~Test execution and regression comparison~~ **Done** | Fixed and newly-broken tests reported separately |
-| 3.5 | Branch, commit, and pull request automation | `git_ops/`, Conventional Commit messages |
-| 3.6 | Pull request body: evidence, rejected hypotheses, confidence | The reasoning is the review artifact |
-| 3.7 | ~~Enforce protected paths~~ **Done** — approval gate lands with 3.5 | Safety rails tested, not just configured |
+| 3.5 | ~~Branch, commit, and pull request automation~~ **Done** | `git_ops/`, Conventional Commit subjects, never to main |
+| 3.6 | ~~Pull request body: evidence, rejected hypotheses, confidence~~ **Done** | The reasoning is the review artifact |
+| 3.7 | ~~Enforce protected paths and human approval~~ **Done** | Draft PRs only; sev0 never merges and never pushes to main |
 
 **Exit criterion:** a pull request you would actually merge, opened without you
-touching the keyboard. Record the GIF for the README here.
+touching the keyboard. Machinery complete; the run itself needs API credit.
+Record the GIF for the README here.
 
 ---
 

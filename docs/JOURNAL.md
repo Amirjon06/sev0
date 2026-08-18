@@ -15,6 +15,23 @@ Format:
 
 ---
 
+## 2026-08-18 — Pull requests
+
+**Tried:** git_ops — branch, commit, and the pull request body.
+**Result:** 22 more tests, 160 in total. Phase 3 is code-complete.
+**Decided:** The refusals are the design. sev0 may create a branch and commit
+to it. It may not commit to the default branch, may not merge, may not work on
+a dirty tree, and opens as a draft. None of that is reachable from inside a
+run. A failed commit deletes its own branch — a half-made branch is worse than
+none, because the next run trips over it.
+**Decided:** The body leads with the root cause, then lists what was ruled out
+and why. A pull request that shows only the answer looks more confident and is
+worth less to whoever has to review it. Verification output is quoted verbatim
+rather than summarised, and the count of tool calls that actually executed code
+is stated separately from the total.
+**Decided:** No verified fix means no pull request. sev0 does not propose
+changes it could not prove, and there is no flag to override that.
+
 ## 2026-08-18 — The agent can run experiments
 
 **Tried:** Exposed the sandbox to the investigation loop as three tools:
