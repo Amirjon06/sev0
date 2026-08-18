@@ -15,6 +15,24 @@ Format:
 
 ---
 
+## 2026-08-18 — Evidence collectors
+
+**Tried:** Built the log, metric, and git-history collectors. No model involved
+yet; this is the plumbing the agent will stand on.
+**Result:** 26 new tests, all against a mocked transport so CI needs no Docker.
+Two real bugs surfaced while writing them. The git log parser put each commit's
+file list into the *next* commit's record, because --name-only writes files
+after the whole format string, so the record separator has to lead rather than
+trail. And Prometheus renders an empty-denominator ratio as the string "NaN",
+which float() accepts happily — left in, it poisoned the baseline average.
+**Decided:** Onset detection requires a breach to persist across several
+samples. A single spike is a restart or one unlucky request, and an agent that
+chases blips is worse than no agent. The collectors deduplicate log lines by
+shape before returning them: a minute of traffic is thousands of near-identical
+lines, and handing those to a model buries the signal it is meant to find.
+**Note:** history.py is read-only by construction — no checkout, no branch, no
+commit. An investigation must not be able to damage what it is investigating.
+
 ## 2026-08-17 — Fault injection working
 
 **Tried:** Built the sev0-lab CLI, the target repository, and the first

@@ -39,10 +39,10 @@ never will — that is the real test of this phase.
 
 | # | Task | Deliverable |
 | --- | --- | --- |
-| 2.1 | Loki log collector with incident-window filtering | `collectors/logs.py` returns ranked log lines |
-| 2.2 | Prometheus metrics collector with anomaly windowing | `collectors/metrics.py` identifies onset time |
-| 2.3 | Tempo trace collector for the failing request path | `collectors/traces.py` returns exemplar traces |
-| 2.4 | Git history collector: commits, blame, diffs in window | `collectors/history.py` |
+| 2.1 | ~~Loki log collector with incident-window filtering~~ **Done** | `collectors/logs.py` returns deduplicated log lines |
+| 2.2 | ~~Prometheus metrics collector with anomaly windowing~~ **Done** | `collectors/metrics.py` identifies onset time |
+| 2.3 | Tempo trace collector for the failing request path | Blocked on 1.2b |
+| 2.4 | ~~Git history collector: commits, blame, diffs in window~~ **Done** | `collectors/history.py`, read-only by construction |
 | 2.5 | AST-aware code retrieval with tree-sitter and ripgrep | `retrieval/` returns whole functions, not chunks |
 | 2.6 | Agent loop with tool calling and persisted run state | `agent/loop.py`, traces written to `runs/` |
 | 2.7 | Structured root-cause output with a confidence signal | Pydantic model, not free text |
