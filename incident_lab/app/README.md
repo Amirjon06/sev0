@@ -14,6 +14,31 @@ that a fault is not obvious from a glance.
 | **payments** | 8003 | Simulated charge authorization |
 | **loadgen** | — | Drives ~4 requests/second of baseline shopper traffic |
 
+## Observability
+
+| Component | Port | Purpose |
+| --- | --- | --- |
+| **Grafana** | 3000 | Dashboards; anonymous access, no login needed |
+| **Prometheus** | 9090 | Scrapes `/metrics` from every service every 5s |
+| **Loki** | 3100 | Log storage, queryable by service, level, and status |
+| **Alloy** | 12345 | Ships container logs into Loki |
+
+Open [localhost:3000](http://localhost:3000) and the **Storefront** dashboard is
+already there: request rate, 5xx share, p95 latency, checkout outcomes, and a
+live error log.
+
+Useful queries once you are hunting something:
+
+```logql
+{service="cart", level="WARNING"}
+{service="gateway"} |= "checkout" | json | status >= 500
+```
+
+```promql
+sum by (service) (rate(http_requests_total{status=~"5.."}[1m]))
+histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_seconds_bucket[5m])))
+```
+
 ## Running it
 
 ```bash
@@ -68,3 +93,11 @@ pricing faults and a clean thing to assert against in ground truth.
 
 **The pool is configurable** via `DB_POOL_MAX_SIZE` and `DB_POOL_TIMEOUT`, so
 config faults can starve the cart service without touching any code.
+
+**Metrics are labelled by route template**, not by concrete path. Labelling
+`/carts/user-0042` instead of `/carts/{user_id}` would create a new time series
+per shopper and take Prometheus down before the benchmark suite finished.
+
+**Uvicorn's own access log is off.** The services already emit a richer
+structured line per request, and two log lines per request doubled the volume
+Loki had to store for no added information.

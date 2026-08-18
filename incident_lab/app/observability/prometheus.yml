@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: storefront
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gateway:8000"]
+        labels:
+          service: gateway
+      - targets: ["catalog:8001"]
+        labels:
+          service: catalog
+      - targets: ["cart:8002"]
+        labels:
+          service: cart
+      - targets: ["payments:8003"]
+        labels:
+          service: payments
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

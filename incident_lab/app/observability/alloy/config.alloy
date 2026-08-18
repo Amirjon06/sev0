@@ -1,0 +1,62 @@
+// Discovers running containers over the Docker API and ships their stdout to
+// Loki. Using the API rather than reading /var/lib/docker/containers keeps this
+// working on Docker Desktop, where that directory lives inside a VM.
+
+discovery.docker "compose" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "10s"
+}
+
+discovery.relabel "compose" {
+  targets = discovery.docker.compose.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "sev0-lab"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "compose" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.compose.output
+  forward_to = [loki.process.storefront.receiver]
+}
+
+// Services log JSON. Lift level and status into labels so queries can filter on
+// them, and leave everything else in the line for full-text search.
+loki.process "storefront" {
+  stage.json {
+    expressions = {
+      level  = "level",
+      status = "status",
+      path   = "path",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level  = "level",
+      status = "status",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
