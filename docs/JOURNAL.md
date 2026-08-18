@@ -15,6 +15,30 @@ Format:
 
 ---
 
+## 2026-08-18 — The agent investigates
+
+**Tried:** Code retrieval, the toolbox, and the investigation loop. `sev0
+investigate` now runs end to end against a live model.
+**Result:** 38 more tests, 96 in total. The loop is exercised against a
+scripted client, so CI needs neither an API key nor Docker.
+**Decided:** Retrieval uses the stdlib `ast` rather than tree-sitter. The
+target is single-language by design, so the dependency buys nothing, and
+returning a fixed window of lines around a match would cut functions in half —
+half a function is worse than none, because the model sees a branch without the
+guard above it and confidently explains a bug that is not there.
+**Decided:** Tools return strings and never raise. A malformed regex should
+cost one turn and a correction, not the run. Failures go back as tool results
+with is_error set, so the model can see what it did wrong.
+**Decided:** The loop owns what a model cannot be trusted with — a hard call
+budget, a stop condition, and the trace. Everything else lives in the prompt;
+a loop that second-guesses the model just fights it.
+**Caught by a test:** the loop was passing its live message list to every call,
+so anything recording requests saw the conversation's final state rather than
+what was sent that turn. It now sends a copy.
+**Open question:** the system prompt tells the model to record rejected
+hypotheses. Whether it actually does, under budget pressure, is exactly the
+kind of thing Phase 4 needs to measure rather than assume.
+
 ## 2026-08-18 — Evidence collectors
 
 **Tried:** Built the log, metric, and git-history collectors. No model involved

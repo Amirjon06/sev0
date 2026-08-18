@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     require_human_approval: bool = True
     protected_paths: str = "migrations/,infra/,.github/"
 
+    # The repository under investigation. Defaults to the Incident Lab target
+    # rather than this project, so a misconfigured run reads a scratch copy
+    # instead of real source.
+    target_repo: Path = Path("./runs/target")
+
     # Output
     run_dir: Path = Path("./runs")
     log_level: str = "INFO"

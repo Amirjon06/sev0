@@ -43,9 +43,9 @@ never will — that is the real test of this phase.
 | 2.2 | ~~Prometheus metrics collector with anomaly windowing~~ **Done** | `collectors/metrics.py` identifies onset time |
 | 2.3 | Tempo trace collector for the failing request path | Blocked on 1.2b |
 | 2.4 | ~~Git history collector: commits, blame, diffs in window~~ **Done** | `collectors/history.py`, read-only by construction |
-| 2.5 | AST-aware code retrieval with tree-sitter and ripgrep | `retrieval/` returns whole functions, not chunks |
-| 2.6 | Agent loop with tool calling and persisted run state | `agent/loop.py`, traces written to `runs/` |
-| 2.7 | Structured root-cause output with a confidence signal | Pydantic model, not free text |
+| 2.5 | ~~AST-aware code retrieval~~ **Done** | `retrieval/` returns whole functions, not chunks |
+| 2.6 | ~~Agent loop with tool calling and persisted run state~~ **Done** | `agent/loop.py`, traces written to `runs/` |
+| 2.7 | ~~Structured root-cause output with a confidence signal~~ **Done** | Typed dataclass, not free text |
 
 **Exit criterion:** the agent names the correct file for at least one scenario,
 end to end, without hints.
