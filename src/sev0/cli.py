@@ -13,6 +13,8 @@ from sev0.agent.tools import Toolbox
 from sev0.collectors.logs import LokiCollector
 from sev0.collectors.metrics import PrometheusCollector
 from sev0.config import Settings, load_settings
+from sev0.sandbox.patch import PatchLimits
+from sev0.sandbox.runner import DockerSandbox, LocalSandbox, Sandbox
 
 app = typer.Typer(
     name="sev0",
@@ -44,6 +46,7 @@ def doctor() -> None:
     table.add_row("Loki", settings.loki_url or "[yellow]not configured[/yellow]")
     table.add_row("Prometheus", settings.prometheus_url or "[yellow]not configured[/yellow]")
     table.add_row("Sandbox runtime", settings.sandbox_runtime)
+    table.add_row("Sandbox image", settings.sandbox_image)
     table.add_row("Max tool calls", str(settings.max_tool_calls))
     table.add_row("Max files changed", str(settings.max_files_changed))
     table.add_row("Human approval required", str(settings.require_human_approval))
@@ -51,7 +54,37 @@ def doctor() -> None:
     console.print(table)
 
 
-def _build_toolbox(state: RunState, settings: Settings) -> Toolbox:
+def _build_sandbox(settings: Settings, allow_local: bool) -> Sandbox | None:
+    docker = DockerSandbox(
+        image=settings.sandbox_image,
+        network=settings.sandbox_network,
+    )
+    if docker.available():
+        return docker
+
+    if not allow_local:
+        console.print(
+            "[yellow]Docker is unavailable, so the agent cannot run experiments.[/yellow]\n"
+            "Start Docker Desktop, or pass --local-sandbox to execute on this machine."
+        )
+        return None
+
+    console.print(
+        "[red]Running experiments directly on this machine.[/red] "
+        "Generated code will execute outside any isolation."
+    )
+    return LocalSandbox()
+
+
+def _limits(settings: Settings) -> PatchLimits:
+    return PatchLimits(
+        max_files=settings.max_files_changed,
+        max_lines=settings.max_lines_changed,
+        protected_paths=tuple(settings.protected_path_list),
+    )
+
+
+def _build_toolbox(state: RunState, settings: Settings, sandbox: Sandbox | None) -> Toolbox:
     if not settings.target_repo.exists():
         console.print(
             f"[red]No repository at {settings.target_repo}.[/red] "
@@ -66,6 +99,8 @@ def _build_toolbox(state: RunState, settings: Settings) -> Toolbox:
         prometheus=(
             PrometheusCollector(settings.prometheus_url) if settings.prometheus_url else None
         ),
+        sandbox=sandbox,
+        limits=_limits(settings),
     )
 
 
@@ -91,11 +126,17 @@ def investigate(
     dry_run: bool = typer.Option(
         True, "--dry-run/--no-dry-run", help="Investigate without opening a pull request."
     ),
+    local_sandbox: bool = typer.Option(
+        False,
+        "--local-sandbox",
+        help="Run experiments on this machine when Docker is unavailable. Not isolated.",
+    ),
 ) -> None:
     """Investigate an incident and identify its root cause."""
     settings = load_settings()
     state = RunState(incident=incident)
-    toolbox = _build_toolbox(state, settings)
+    sandbox = _build_sandbox(settings, allow_local=local_sandbox)
+    toolbox = _build_toolbox(state, settings, sandbox)
     client = _build_client()
 
     console.print(f"Investigating [bold]{incident}[/bold] against {settings.target_repo}\n")

@@ -6,7 +6,9 @@ structure wastes turns. And a tool that fails returns the failure as text rather
 than raising: a malformed regex should cost one turn and a correction, not the
 whole run.
 
-Nothing in this module writes to the repository under investigation.
+Nothing in this module writes to the repository under investigation. The
+experiment tools execute code, but always against a throwaway copy inside the
+sandbox, so an investigation cannot damage its own evidence.
 """
 
 from __future__ import annotations
@@ -18,11 +20,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sev0.agent.state import Confidence, RootCause, RunState, Verdict
+from sev0.agent.state import Confidence, ProposedFix, RootCause, RunState, Verdict
 from sev0.collectors import logs as log_collector
 from sev0.collectors import metrics as metric_collector
 from sev0.collectors.history import GitError, GitHistoryCollector
 from sev0.retrieval import code
+from sev0.sandbox import verify as verifier
+from sev0.sandbox.patch import PatchBuilder, PatchLimits
+from sev0.sandbox.runner import Sandbox
 
 MAX_RESULT_CHARS = 6000
 
@@ -66,12 +71,16 @@ class Toolbox:
         repo: Path,
         loki: log_collector.LokiCollector | None = None,
         prometheus: metric_collector.PrometheusCollector | None = None,
+        sandbox: Sandbox | None = None,
+        limits: PatchLimits | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.state = state
         self.repo = Path(repo)
         self.loki = loki
         self.prometheus = prometheus
+        self.sandbox = sandbox
+        self.limits = limits or PatchLimits()
         self.now = now
         self._history: GitHistoryCollector | None = None
         self._tools = {tool.name: tool for tool in self._build()}
@@ -257,6 +266,79 @@ class Toolbox:
         symbol = code.get_symbol(self.repo, path, name)
         return f"{symbol.location}\n\n{symbol.source}"
 
+    # -- experiments -------------------------------------------------------
+
+    def _require_sandbox(self) -> Sandbox:
+        if self.sandbox is None:
+            raise RuntimeError("No sandbox is configured, so nothing can be executed")
+        return self.sandbox
+
+    def run_tests(self, selectors: list[str] | None = None) -> str:
+        """Run the target's own suite and report what fails."""
+        sandbox = self._require_sandbox()
+
+        with verifier.scratch_copy(self.repo) as scratch:
+            run = verifier.run_tests(sandbox, scratch, tuple(selectors or ()))
+
+        if run.timed_out:
+            return "The test suite timed out."
+
+        rows = [run.render()]
+        if run.failing_tests:
+            rows.append("\nFailing:")
+            rows.extend(f"  {name}" for name in run.failing_tests)
+            rows.append("\nOutput:\n" + run.output[-2000:])
+        return "\n".join(rows)
+
+    def run_snippet(self, code_to_run: str, timeout_seconds: int = 60) -> str:
+        """Execute Python against a copy of the tree and report what happened.
+
+        This is how a hypothesis stops being a guess. Calling the suspect
+        function with the suspect input either raises or it does not, and that
+        answer is worth more than any amount of reading.
+        """
+        sandbox = self._require_sandbox()
+
+        with verifier.scratch_copy(self.repo) as scratch:
+            result = sandbox.run(
+                ["python", "-c", code_to_run],
+                workdir=scratch,
+                timeout_seconds=timeout_seconds,
+            )
+
+        if result.timed_out:
+            return f"The snippet did not finish within {timeout_seconds}s."
+
+        return f"exit code {result.exit_code}\n\n{result.output[-4000:] or '(no output)'}"
+
+    def try_patch(
+        self,
+        path: str,
+        find: str,
+        replace: str,
+        rationale: str = "",
+    ) -> str:
+        """Apply a candidate fix in the sandbox and report whether it holds.
+
+        Records the attempt either way. A patch that failed verification is
+        part of the evidence, not something to quietly discard.
+        """
+        sandbox = self._require_sandbox()
+
+        patch = PatchBuilder(rationale=rationale).edit(path, find, replace).build()
+        outcome = verifier.verify_patch(sandbox, self.repo, patch, self.limits)
+
+        self.state.proposed_fix = ProposedFix(
+            path=path,
+            find=find,
+            replace=replace,
+            rationale=rationale,
+            verified=outcome.verified,
+            verification=outcome.render(),
+        )
+
+        return outcome.render()
+
     # -- reasoning ---------------------------------------------------------
 
     def record_hypothesis(self, statement: str, verdict: str, reasoning: str = "") -> str:
@@ -412,6 +494,62 @@ class Toolbox:
                     required=["path", "name"],
                 ),
                 self.read_symbol,
+            ),
+            Tool(
+                "run_tests",
+                "Run the target's own test suite in the sandbox. Use this to see which "
+                "assertions the failure breaks before proposing anything.",
+                _obj(
+                    {
+                        "selectors": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional pytest node ids to narrow the run.",
+                        }
+                    }
+                ),
+                self.run_tests,
+            ),
+            Tool(
+                "run_snippet",
+                "Execute Python against a throwaway copy of the source and report the "
+                "result. This is how you test a hypothesis instead of assuming it: call "
+                "the suspect function with the suspect input and see what actually "
+                "happens. Imports resolve from the repository root.",
+                _obj(
+                    {
+                        "code_to_run": {
+                            "type": "string",
+                            "description": "Python source. Print what you want to see.",
+                        },
+                        "timeout_seconds": {"type": "integer"},
+                    },
+                    required=["code_to_run"],
+                ),
+                self.run_snippet,
+            ),
+            Tool(
+                "try_patch",
+                "Propose a fix and find out whether it works. The failure must reproduce "
+                "first, then the patch is applied to a throwaway copy and the suite is "
+                "re-run. Reports which tests were fixed and which were broken. Rejected "
+                "if it exceeds the diff limits or touches a protected path.",
+                _obj(
+                    {
+                        "path": {"type": "string", "description": "File to change."},
+                        "find": {
+                            "type": "string",
+                            "description": "Exact text to replace. Must appear once.",
+                        },
+                        "replace": {"type": "string", "description": "Replacement text."},
+                        "rationale": {
+                            "type": "string",
+                            "description": "Why this change fixes the observed failure.",
+                        },
+                    },
+                    required=["path", "find", "replace"],
+                ),
+                self.try_patch,
             ),
             Tool(
                 "record_hypothesis",

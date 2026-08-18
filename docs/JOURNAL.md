@@ -15,6 +15,27 @@ Format:
 
 ---
 
+## 2026-08-18 — The agent can run experiments
+
+**Tried:** Exposed the sandbox to the investigation loop as three tools:
+`run_snippet`, `run_tests`, and `try_patch`.
+**Result:** 16 more tests, 138 in total. Demonstrated end to end against the
+real planted fault with no model involved. Calling compute_total with an
+inactive code raises TypeError in the sandbox; the suite names the one
+assertion it breaks; a "just skip discounts" patch repairs that test and breaks
+three others and is reported as not verified; the correct guard takes it from
+6 passed 1 failed to 7 passed.
+**Decided:** This is the line between the project and an LLM wrapper. A
+hypothesis that has not been executed is a guess however well it reads, so the
+prompt now tells the model to test rather than assume, and the state counts
+experiments separately from reads. An investigation that ran nothing only ever
+formed opinions, and the summary should say so.
+**Decided:** Failed patch attempts are recorded, not discarded. What was tried
+and rejected is evidence for whoever reviews the fix.
+**Note:** experiments still run in throwaway copies, so the tree under
+investigation cannot be damaged by the code being tested against it. There is a
+test asserting a snippet that writes to cart.py leaves the real file untouched.
+
 ## 2026-08-18 — Sandbox and verification
 
 **Tried:** Built the sandbox, the patch limits, and the verifier. No API credit

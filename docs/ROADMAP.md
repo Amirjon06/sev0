@@ -48,7 +48,7 @@ never will — that is the real test of this phase.
 | 2.7 | ~~Structured root-cause output with a confidence signal~~ **Done** | Typed dataclass, not free text |
 
 **Exit criterion:** the agent names the correct file for at least one scenario,
-end to end, without hints.
+end to end, without hints. Blocked on API credit, not on code.
 
 ---
 
@@ -62,7 +62,7 @@ end to end, without hints.
 | --- | --- | --- |
 | 3.1 | ~~Docker sandbox with no network and a hard timeout~~ **Done** | `sandbox/runner.py`, plus a local runner for tests |
 | 3.2 | ~~Failure reproduction: confirm the bug before patching~~ **Done** | A green suite means the failure did not reproduce |
-| 3.3 | Patch limits enforced — generation still needs the model | Oversized patches rejected before anything runs |
+| 3.3 | ~~Patch proposal bounded by the diff limits~~ **Done** | `try_patch` verifies or refuses; oversized patches never run |
 | 3.4 | ~~Test execution and regression comparison~~ **Done** | Fixed and newly-broken tests reported separately |
 | 3.5 | Branch, commit, and pull request automation | `git_ops/`, Conventional Commit messages |
 | 3.6 | Pull request body: evidence, rejected hypotheses, confidence | The reasoning is the review artifact |

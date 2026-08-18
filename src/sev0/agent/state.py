@@ -16,6 +16,10 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+# Tools that run code rather than read it. Counted separately because an
+# investigation that never executed anything only ever formed opinions.
+EXPERIMENT_TOOLS = frozenset({"run_tests", "run_snippet", "try_patch"})
+
 
 class Verdict(StrEnum):
     PROPOSED = "proposed"
@@ -47,6 +51,18 @@ class ToolCall:
 
 
 @dataclass
+class ProposedFix:
+    """A candidate patch and what happened when it was actually run."""
+
+    path: str
+    find: str
+    replace: str
+    rationale: str
+    verified: bool
+    verification: str
+
+
+@dataclass
 class RootCause:
     service: str
     file: str
@@ -65,11 +81,17 @@ class RunState:
     tool_calls: list[ToolCall] = field(default_factory=list)
     hypotheses: list[Hypothesis] = field(default_factory=list)
     root_cause: RootCause | None = None
+    proposed_fix: ProposedFix | None = None
     stopped_because: str | None = None
 
     @property
     def call_count(self) -> int:
         return len(self.tool_calls)
+
+    @property
+    def experiments(self) -> int:
+        """Tool calls that actually executed something, rather than read."""
+        return sum(1 for call in self.tool_calls if call.name in EXPERIMENT_TOOLS)
 
     @property
     def rejected(self) -> list[Hypothesis]:
@@ -124,7 +146,7 @@ class RunState:
     def summary(self) -> str:
         lines = [
             f"run {self.run_id}  incident={self.incident}",
-            f"tool calls: {self.call_count}",
+            f"tool calls: {self.call_count} ({self.experiments} experiments)",
         ]
 
         for hypothesis in self.hypotheses:
@@ -143,5 +165,9 @@ class RunState:
             )
         else:
             lines.append(f"no root cause: {self.stopped_because}")
+
+        if self.proposed_fix is not None:
+            mark = "verified" if self.proposed_fix.verified else "NOT verified"
+            lines.append(f"fix: {self.proposed_fix.path} ({mark})")
 
         return "\n".join(lines)
