@@ -17,7 +17,8 @@ observe it breaking. No agent yet.
 | # | Task | Deliverable |
 | --- | --- | --- |
 | 1.1 | ~~Build a multi-service demo app in `incident_lab/app/`~~ **Done** | `docker compose up` serves a working storefront |
-| 1.2 | Add the observability stack (Loki, Prometheus, Tempo, Grafana) | Dashboards show live traffic |
+| 1.2 | ~~Add the observability stack (Loki, Prometheus, Grafana)~~ **Done** | Dashboards show live traffic |
+| 1.2b | Add distributed tracing (Tempo + OpenTelemetry spans) | Deferred — see journal |
 | 1.3 | ~~Write a load generator so the app has steady baseline traffic~~ **Done** | Metrics are non-flat at rest |
 | 1.4 | Build the fault injection interface (`inject` / `restore`) | `sev0-lab inject --scenario X` breaks the app reproducibly |
 | 1.5 | Author the first three code-fault scenarios with ground truth | `incident_lab/scenarios/*.yaml` with commit, file, line |

@@ -15,6 +15,27 @@ Format:
 
 ---
 
+## 2026-08-17 — Observability stack in
+
+**Tried:** Loki, Alloy, Prometheus, and Grafana alongside the storefront, with
+prometheus_client middleware on every service.
+**Result:** Working. Route labels use the FastAPI template, not the concrete
+path — labelling /carts/user-0042 would have made one time series per shopper.
+Turned uvicorn's access log off; the structured line already carries more.
+**Decided:** Tracing (Tempo + OTel spans) is deferred to 1.2b. Logs and metrics
+are enough to diagnose the first fault families, and spans are a bigger lift
+than they are worth before the agent exists to consume them.
+
+## 2026-08-17 — Storefront verified end to end
+
+**Tried:** Ran the full stack under Compose and drove a real checkout.
+**Result:** Working, but cart crash-looped on startup. FastAPI rejects a 204
+route whose handler declares a return type. Symptom presented as gateway 500s,
+not as a cart failure — the failing service and the alerting service were
+different, which is the whole premise of this project showing up on day one.
+**Decided:** Next is task 1.2, the observability stack. Raw `docker compose
+logs` is unreadable at 4 rps; the agent needs queryable telemetry, and so do I.
+
 ## 2026-08-17 — Demo storefront running
 
 **Tried:** Built the Phase 1 target application: four Python services (gateway,
