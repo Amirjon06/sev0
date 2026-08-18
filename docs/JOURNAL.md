@@ -15,6 +15,23 @@ Format:
 
 ---
 
+## 2026-08-17 — Fault injection working
+
+**Tried:** Built the sev0-lab CLI, the target repository, and the first
+scenario: a discount refactor that drops a None guard.
+**Result:** Inject commits a real change into a separate repo under runs/ and
+rebuilds cart; restore resets to the baseline tag. Verified end to end, and the
+harness is covered by 15 tests.
+**Decided:** Faults land in a target repo, never in this one. Planting bugs
+here would push broken code to the remote, and the agent needs a log with a
+plausible haystack rather than one suspicious commit on top of scaffolding.
+Edits are find-and-replace, not diffs — a diff carries line numbers and would
+rot silently as the source moves, while an exact anchor fails loudly. A test
+asserts every anchor still matches the pristine source exactly once.
+**Also:** the fault is deliberately partial. Valid promo codes keep working, so
+roughly one checkout in seven fails. A fault that broke everything would be
+trivially detectable and would flatter the agent.
+
 ## 2026-08-17 — Observability stack in
 
 **Tried:** Loki, Alloy, Prometheus, and Grafana alongside the storefront, with

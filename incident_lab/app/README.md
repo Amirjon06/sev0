@@ -41,12 +41,36 @@ histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_second
 
 ## Running it
 
+Use the `sev0-lab` CLI rather than `docker compose` directly. The services build
+from a target repository under `runs/target`, which the CLI creates on first
+use, so a bare `docker compose up` has nothing to build from.
+
 ```bash
-cd incident_lab/app
-docker compose up --build
+sev0-lab up          # materialise the target repo, then start everything
+sev0-lab status      # what is running, and whether a fault is injected
+sev0-lab down        # stop; add --volumes to wipe the database
 ```
 
-First build takes a few minutes. After that, `docker compose up` is seconds.
+First build takes a few minutes. After that, `sev0-lab up` is seconds.
+
+## Breaking it
+
+```bash
+sev0-lab list                                # available scenarios
+sev0-lab inject --scenario checkout-promo-none
+sev0-lab restore                             # back to health
+```
+
+`inject` commits the fault into the target repository as a real change with a
+plausible message and author, then rebuilds only the affected services. It
+deliberately tells you nothing about what it changed. When you want the answer
+key:
+
+```bash
+sev0-lab reveal --scenario checkout-promo-none
+```
+
+Never wire `reveal` into anything the agent can read. It is the scoring key.
 
 Check it is alive:
 

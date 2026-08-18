@@ -1,0 +1,47 @@
+id: checkout-promo-none
+title: Checkout 5xx after a discount refactor
+family: code
+alert: checkout-5xx
+
+summary: |
+  A tidy-up of the discount calculation drops the guard that treats an unknown
+  promotion code as "no discount". Shoppers entering a stale code now multiply
+  a subtotal by None, cart raises, and gateway returns 500. Roughly one in
+  seven checkouts fails, so the error rate climbs without the service ever
+  falling over — the failure looks partial and intermittent, which is what
+  makes it worth diagnosing.
+
+commit:
+  author: Dana Whitfield <dana@storefront.example>
+  message: |
+    refactor(cart): Simplify the discount calculation
+
+    The conditional around discount_percent was doing two jobs: defaulting
+    the percentage and deciding whether to apply it at all. Collapse it into
+    a single expression now that the default is a plain zero.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          discount_percent = PROMOTIONS.get(promo_code) if promo_code else None
+          discount = 0
+          if discount_percent is not None:
+              discount = subtotal * discount_percent // 100
+    replace: |2
+          discount_percent = PROMOTIONS.get(promo_code) if promo_code else 0
+          discount = subtotal * discount_percent // 100
+
+rebuild:
+  - cart
+
+failing_tests:
+  - tests/test_storefront_pricing.py::test_unknown_promo_code_is_ignored_rather_than_failing
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: compute_total
+  summary: |
+    PROMOTIONS.get returns None for a code that is not an active promotion.
+    The refactor removed the None check, so the subsequent multiplication
+    raises TypeError for any unrecognised code.

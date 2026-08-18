@@ -1,8 +1,11 @@
 name: sev0-lab
 
+# Services build from the target repository under runs/, not from this
+# directory. That copy is what faults are committed into, so the containers
+# always run exactly the tree the agent will investigate.
 x-service: &service
   build:
-    context: .
+    context: ../../runs/target
     dockerfile: Dockerfile
   restart: unless-stopped
   environment: &service-env

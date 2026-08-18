@@ -20,9 +20,9 @@ observe it breaking. No agent yet.
 | 1.2 | ~~Add the observability stack (Loki, Prometheus, Grafana)~~ **Done** | Dashboards show live traffic |
 | 1.2b | Add distributed tracing (Tempo + OpenTelemetry spans) | Deferred — see journal |
 | 1.3 | ~~Write a load generator so the app has steady baseline traffic~~ **Done** | Metrics are non-flat at rest |
-| 1.4 | Build the fault injection interface (`inject` / `restore`) | `sev0-lab inject --scenario X` breaks the app reproducibly |
-| 1.5 | Author the first three code-fault scenarios with ground truth | `incident_lab/scenarios/*.yaml` with commit, file, line |
-| 1.6 | Build the `sev0-lab` CLI (`up`, `down`, `inject`, `restore`, `status`) | One command to break and unbreak |
+| 1.4 | ~~Build the fault injection interface (`inject` / `restore`)~~ **Done** | `sev0-lab inject --scenario X` breaks the app reproducibly |
+| 1.5 | Author the first three code-fault scenarios with ground truth — **1 of 3** | `incident_lab/scenarios/*.yaml` with commit, file, line |
+| 1.6 | ~~Build the `sev0-lab` CLI (`up`, `down`, `inject`, `restore`, `status`)~~ **Done** | One command to break and unbreak |
 
 **Exit criterion:** you can run `sev0-lab inject --scenario checkout-5xx`, watch
 the error rate climb in Grafana, and diagnose it yourself from the logs in under

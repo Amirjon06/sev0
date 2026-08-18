@@ -32,8 +32,8 @@ CREATE TABLE IF NOT EXISTS cart_items (
 CREATE INDEX IF NOT EXISTS cart_items_user_idx ON cart_items (user_id);
 """
 
-# Promotions are looked up by code. A missing code yields None, which callers
-# must handle -- this is intentional surface area for a null-handling fault.
+# Active promotions, keyed by the code a shopper enters at checkout. Codes that
+# are not in here are not errors: expired codes get typed in constantly.
 PROMOTIONS: dict[str, int] = {
     "SAVE10": 10,
     "SAVE25": 25,

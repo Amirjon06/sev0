@@ -32,6 +32,7 @@ dependencies = [
     "docker>=7.1.0",
     "structlog>=24.4.0",
     "opentelemetry-sdk>=1.28.0",
+    "PyYAML>=6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -47,17 +48,19 @@ dev = [
     "prometheus-client>=0.21.0",
     "psycopg[binary]>=3.2.0",
     "psycopg-pool>=3.2.0",
+    "types-PyYAML>=6.0.12",
 ]
 
 [project.scripts]
 sev0 = "sev0.cli:app"
+sev0-lab = "incident_lab.cli:app"
 
 [project.urls]
 Homepage = "https://github.com/Amirjon06/sev0"
 Issues = "https://github.com/Amirjon06/sev0/issues"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/sev0"]
+packages = ["src/sev0", "incident_lab"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -76,4 +79,8 @@ known-first-party = ["sev0", "services", "loadgen", "incident_lab"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["src"]
+files = ["src", "incident_lab"]
+# The demo storefront is a separate deployable with its own import root, and it
+# is deliberately broken by fault injection. Type-check the harness, not the
+# thing the harness breaks.
+exclude = "incident_lab/app/"

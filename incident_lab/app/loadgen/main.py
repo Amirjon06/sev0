@@ -19,7 +19,12 @@ REQUESTS_PER_SECOND = float(os.getenv("LOADGEN_RPS", "4"))
 CONCURRENCY = int(os.getenv("LOADGEN_CONCURRENCY", "4"))
 
 SKUS = ["sku-001", "sku-002", "sku-004", "sku-005"]
-PROMO_CODES = [None, None, None, "SAVE10", "WELCOME", "SAVE25"]
+
+# SUMMER25 is not a real promotion. Shoppers type stale codes off old emails all
+# the time, and a healthy cart ignores them. Keeping that traffic in the mix
+# means the unknown-code path is exercised continuously rather than only when a
+# test happens to cover it.
+PROMO_CODES = [None, None, None, "SAVE10", "WELCOME", "SAVE25", "SUMMER25"]
 
 
 async def one_session(client: httpx.AsyncClient, user_id: str) -> None:
