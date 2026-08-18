@@ -26,6 +26,11 @@ SKUS = ["sku-001", "sku-002", "sku-004", "sku-005"]
 # test happens to cover it.
 PROMO_CODES = [None, None, None, "SAVE10", "WELCOME", "SAVE25", "SUMMER25"]
 
+# Most shoppers never touch the shipping selector, so None is the common case.
+# "Express" with a capital E is what an older build of the web front end still
+# sends, and a healthy cart treats anything it does not recognise as standard.
+SHIPPING_SPEEDS = [None, None, None, "standard", "express", "Express"]
+
 
 async def one_session(client: httpx.AsyncClient, user_id: str) -> None:
     """Simulate a shopper: browse, add items, then check out."""
@@ -39,7 +44,10 @@ async def one_session(client: httpx.AsyncClient, user_id: str) -> None:
 
     await client.post(
         f"{GATEWAY_URL}/checkout/{user_id}",
-        json={"promo_code": random.choice(PROMO_CODES)},
+        json={
+            "promo_code": random.choice(PROMO_CODES),
+            "shipping_speed": random.choice(SHIPPING_SPEEDS),
+        },
     )
     await client.delete(f"{CART_URL}/carts/{user_id}")
 

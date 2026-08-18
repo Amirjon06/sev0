@@ -7,7 +7,10 @@ that mean nothing.
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,6 +47,26 @@ def commit_fault(repo: Path, scenario: model.Scenario) -> None:
     target_repo.git(repo, "commit", "-q", "-m", scenario.commit_message)
 
 
+class TestPristineSource:
+    def test_the_storefront_suite_is_green_before_any_fault(self) -> None:
+        """The baseline must be healthy, or nothing downstream means anything.
+
+        This replaces a copy of the pricing assertions that used to live here.
+        Two suites asserting the same numbers drift, and the one in the sev0
+        repo was the one that could drift silently — it never travels with the
+        code it describes.
+        """
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "tests"],
+            cwd=APP_DIR,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONPATH": str(APP_DIR)},
+        )
+
+        assert result.returncode == 0, result.stdout + result.stderr
+
+
 class TestScenarios:
     def test_every_scenario_loads(self) -> None:
         scenarios = model.load_all()
@@ -75,6 +98,44 @@ class TestScenarios:
 
         with pytest.raises(model.ScenarioError, match="matched 0 times"):
             edit.apply(tmp_path)
+
+
+class TestScenarioDiversity:
+    def test_scenarios_share_an_alert_but_not_a_cause(self) -> None:
+        """Two bugs presenting identically is the point.
+
+        Both scenarios surface as a partial 5xx rate on checkout. If the agent
+        could tell them apart from the alert alone, the benchmark would be
+        measuring pattern matching rather than diagnosis.
+        """
+        promo = model.load("checkout-promo-none")
+        shipping = model.load("checkout-shipping-lookup")
+
+        assert promo.alert == shipping.alert
+        assert promo.ground_truth.symbol != shipping.ground_truth.symbol
+
+    def test_every_scenario_names_a_test_it_should_break(self) -> None:
+        # Without a failing assertion there is nothing for a fix to turn green,
+        # so verification could never confirm anything.
+        for scenario in model.load_all().values():
+            assert scenario.failing_tests, f"{scenario.id} names no failing test"
+
+    def test_the_shipping_fault_breaks_the_fallback(self, repo: Path) -> None:
+        import importlib.util
+
+        commit_fault(repo, model.load("checkout-shipping-lookup"))
+
+        spec = importlib.util.spec_from_file_location(
+            "cart_shipping_under_test", repo / "services" / "cart" / "main.py"
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+
+        # Recognised speeds keep working; only the fallback path is gone.
+        assert module.shipping_cents(1000, "standard") == 499
+        with pytest.raises(KeyError):
+            module.shipping_cents(1000, "Express")
 
 
 class TestTargetRepo:

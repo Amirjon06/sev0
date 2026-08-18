@@ -15,6 +15,33 @@ Format:
 
 ---
 
+## 2026-08-18 — A second scenario, and shipping
+
+**Tried:** A second fault. Ran into the real constraint first: the storefront's
+only meaningfully testable logic was `compute_total`, so every scenario I could
+write landed in the same function. That is not a benchmark, it is one test
+repeated.
+**Result:** Added shipping to cart — a free threshold, per-speed rates, and a
+fallback for a speed the table does not recognise. Then a second scenario that
+replaces the defaulted lookup with a direct subscript, so an unrecognised speed
+raises KeyError. 174 tests.
+**Decided:** Both scenarios present *the same alert*: a partial 5xx rate on
+checkout. Different function, different exception, different fix. If the agent
+could tell them apart from the alert alone, the benchmark would be measuring
+pattern matching rather than diagnosis. There is a test asserting they stay
+indistinguishable from the outside.
+**Decided:** The load generator now sends "Express" with a capital E some of
+the time, because an older front end build would. The unrecognised-speed path
+has to be exercised by real traffic or the fault produces no symptom.
+**Deleted:** `tests/test_storefront_pricing.py`. It duplicated the app's own
+suite, and adding shipping made the duplicate wrong. Replaced with a test that
+runs the storefront's suite against the pristine source — the copy that could
+drift silently was the one that never travelled with the code it described.
+**Still missing:** a fault family that produces no error rate at all. An
+off-by-one on the free shipping threshold is a wrong price, not a crash, and
+nothing in the current telemetry would show it. That needs a different signal
+before it is worth writing.
+
 ## 2026-08-18 — Scoring harness
 
 **Tried:** `incident_lab/scoring.py`, plus `sev0-lab score` and `sev0-lab

@@ -22,6 +22,7 @@ TIMEOUT = httpx.Timeout(5.0, connect=2.0)
 
 class CheckoutRequest(BaseModel):
     promo_code: str | None = None
+    shipping_speed: str | None = None
 
 
 @app.get("/")
@@ -40,9 +41,17 @@ async def products() -> dict[str, object]:
 @app.post("/checkout/{user_id}")
 async def checkout(user_id: str, payload: CheckoutRequest) -> dict[str, object]:
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        params = {
+            key: value
+            for key, value in (
+                ("promo_code", payload.promo_code),
+                ("shipping_speed", payload.shipping_speed),
+            )
+            if value
+        }
         cart_response = await client.get(
             f"{service_url('cart')}/carts/{user_id}",
-            params={"promo_code": payload.promo_code} if payload.promo_code else None,
+            params=params or None,
         )
         cart_response.raise_for_status()
         cart = cart_response.json()
@@ -75,6 +84,7 @@ async def checkout(user_id: str, payload: CheckoutRequest) -> dict[str, object]:
         "items": cart["items"],
         "subtotal_cents": cart["subtotal_cents"],
         "discount_cents": cart["discount_cents"],
+        "shipping_cents": cart["shipping_cents"],
         "total_cents": cart["total_cents"],
         "charge_id": charge["charge_id"],
     }

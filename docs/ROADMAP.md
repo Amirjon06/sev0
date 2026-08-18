@@ -21,7 +21,7 @@ observe it breaking. No agent yet.
 | 1.2b | Add distributed tracing (Tempo + OpenTelemetry spans) | Deferred — see journal |
 | 1.3 | ~~Write a load generator so the app has steady baseline traffic~~ **Done** | Metrics are non-flat at rest |
 | 1.4 | ~~Build the fault injection interface (`inject` / `restore`)~~ **Done** | `sev0-lab inject --scenario X` breaks the app reproducibly |
-| 1.5 | Author the first three code-fault scenarios with ground truth — **1 of 3** | `incident_lab/scenarios/*.yaml` with commit, file, line |
+| 1.5 | ~~Author the first code-fault scenarios with ground truth~~ **2 done** | `incident_lab/scenarios/*.yaml` with commit, file, symbol |
 | 1.6 | ~~Build the `sev0-lab` CLI (`up`, `down`, `inject`, `restore`, `status`)~~ **Done** | One command to break and unbreak |
 
 **Exit criterion:** you can run `sev0-lab inject --scenario checkout-5xx`, watch
@@ -82,7 +82,7 @@ Record the GIF for the README here.
 
 | # | Task | Deliverable |
 | --- | --- | --- |
-| 4.1 | Expand to 15–20 scenarios across code, config, and infra faults | `--suite core` |
+| 4.1 | Expand to 15–20 scenarios across code, config, and infra faults — **2 of ~18** | `--suite core` |
 | 4.2 | ~~Scoring harness for the four metrics~~ **Done** | `sev0-lab score`, `sev0-lab report` |
 | 4.3 | Deterministic replay so runs are comparable | Seeded, versioned scenarios |
 | 4.4 | Ablation studies (no traces, no git history, smaller model) | Which evidence actually matters |

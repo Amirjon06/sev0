@@ -1,0 +1,50 @@
+id: checkout-shipping-lookup
+title: Checkout 5xx after a shipping rates tidy-up
+family: code
+alert: checkout-5xx
+
+summary: |
+  A cleanup of the shipping lookup replaces a defaulted get with a direct
+  subscript. Any speed the rates table does not contain now raises KeyError
+  instead of falling back to standard. An older build of the web front end
+  still sends "Express" with a capital E, so roughly one checkout in six
+  fails while every other order goes through untouched.
+
+  Deliberately the same symptom as checkout-promo-none — a partial 5xx rate on
+  checkout — but a different function, a different exception, and a different
+  fix. An agent that pattern-matches on the alert rather than reading the
+  traceback will land in the wrong place.
+
+commit:
+  author: Priya Raman <priya@storefront.example>
+  message: |
+    refactor(cart): Tidy up the shipping rate lookup
+
+    The defaulted get was hiding the fact that every caller already
+    normalises the speed before it reaches here. Read the rate directly
+    now that the fallback is dead weight.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          chosen = speed or DEFAULT_SHIPPING_SPEED
+          return SHIPPING_RATES.get(chosen, SHIPPING_RATES[DEFAULT_SHIPPING_SPEED])
+    replace: |2
+          chosen = speed or DEFAULT_SHIPPING_SPEED
+          return SHIPPING_RATES[chosen]
+
+rebuild:
+  - cart
+
+failing_tests:
+  - tests/test_pricing.py::TestShipping::test_an_unrecognised_speed_falls_back_rather_than_failing
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: shipping_cents
+  summary: |
+    SHIPPING_RATES has no entry for a speed the front end capitalised
+    differently. The direct subscript raises KeyError where the previous
+    defaulted lookup returned the standard rate, so the checkout fails
+    instead of shipping at the usual price.

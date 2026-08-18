@@ -40,6 +40,15 @@ PROMOTIONS: dict[str, int] = {
     "WELCOME": 5,
 }
 
+# Shipping is charged per order, not per item. Anything at or above the free
+# threshold ships at no cost, which is the rule most shoppers actually notice.
+FREE_SHIPPING_THRESHOLD_CENTS = 5000
+SHIPPING_RATES: dict[str, int] = {
+    "standard": 499,
+    "express": 1299,
+}
+DEFAULT_SHIPPING_SPEED = "standard"
+
 pool: ConnectionPool | None = None
 
 
@@ -77,10 +86,28 @@ def get_pool() -> ConnectionPool:
     return pool
 
 
-def compute_total(items: list[dict[str, Any]], promo_code: str | None) -> dict[str, int]:
+def shipping_cents(payable_cents: int, speed: str | None) -> int:
+    """What shipping costs on an order of this size.
+
+    Speed is whatever the shopper picked, which may be nothing at all. An
+    unrecognised or missing speed falls back to standard rather than failing:
+    a checkout should not break because of how the front end spelled it.
+    """
+    if payable_cents >= FREE_SHIPPING_THRESHOLD_CENTS:
+        return 0
+
+    chosen = speed or DEFAULT_SHIPPING_SPEED
+    return SHIPPING_RATES.get(chosen, SHIPPING_RATES[DEFAULT_SHIPPING_SPEED])
+
+
+def compute_total(
+    items: list[dict[str, Any]],
+    promo_code: str | None,
+    shipping_speed: str | None = None,
+) -> dict[str, int]:
     """Compute the order total in cents.
 
-    Returns the subtotal, the discount applied, and the final total.
+    Returns the subtotal, the discount applied, shipping, and the final total.
     """
     subtotal = sum(item["price_cents"] * item["quantity"] for item in items)
 
@@ -89,10 +116,13 @@ def compute_total(items: list[dict[str, Any]], promo_code: str | None) -> dict[s
     if discount_percent is not None:
         discount = subtotal * discount_percent // 100
 
+    shipping = shipping_cents(subtotal - discount, shipping_speed)
+
     return {
         "subtotal_cents": subtotal,
         "discount_cents": discount,
-        "total_cents": subtotal - discount,
+        "shipping_cents": shipping,
+        "total_cents": subtotal - discount + shipping,
     }
 
 
@@ -120,15 +150,25 @@ async def add_item(user_id: str, payload: AddItem) -> dict[str, object]:
 
 
 @app.get("/carts/{user_id}")
-async def get_cart(user_id: str, promo_code: str | None = None) -> dict[str, object]:
+async def get_cart(
+    user_id: str,
+    promo_code: str | None = None,
+    shipping_speed: str | None = None,
+) -> dict[str, object]:
     with get_pool().connection() as conn:
         rows = conn.execute(
             "SELECT product_id, quantity, price_cents FROM cart_items WHERE user_id = %s",
             (user_id,),
         ).fetchall()
 
-    totals = compute_total(list(rows), promo_code)
-    return {"user_id": user_id, "items": rows, "promo_code": promo_code, **totals}
+    totals = compute_total(list(rows), promo_code, shipping_speed)
+    return {
+        "user_id": user_id,
+        "items": rows,
+        "promo_code": promo_code,
+        "shipping_speed": shipping_speed,
+        **totals,
+    }
 
 
 @app.delete("/carts/{user_id}", status_code=204, response_class=Response)
