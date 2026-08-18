@@ -34,8 +34,9 @@
 ## What sev0 does
 
 **sev0 is an agent that takes the pager.** Point it at a production incident and
-it investigates on its own — reading logs, metrics, traces, Git history, and
-source code — until it can name a **root cause**, not just a symptom.
+it investigates on its own — reading logs, metrics, Git history and source
+code, and running experiments against the code — until it can name a **root
+cause**, not just a symptom.
 
 It then writes a patch, reproduces the failure in an **isolated sandbox**, runs
 the test suite to confirm the fix holds and nothing else breaks, and opens a
@@ -53,10 +54,10 @@ harness rather than a demo video.
 
 | Capability | What it means |
 | --- | --- |
-| **Evidence collection** | Queries Loki, Prometheus, and Tempo for the logs, metrics, and traces around the incident window |
+| **Evidence collection** | Queries Loki and Prometheus for the logs and metrics around the incident window |
 | **History correlation** | Correlates the failure onset against recent commits, deploys, and config changes |
 | **Code retrieval** | AST-aware search over the target repository to pull the functions actually implicated |
-| **Hypothesis testing** | Forms candidate root causes and *tests* them in a sandbox instead of guessing once |
+| **Hypothesis testing** | Runs code in a sandbox to test each candidate cause, rather than reasoning about what it would do |
 | **Patch generation** | Produces a minimal diff bounded by explicit file and line limits |
 | **Verification** | Reproduces the original failure, applies the patch, and re-runs the suite to prove recovery |
 | **Pull request authoring** | Opens a PR with the evidence trail, the rejected hypotheses, and the confidence level |
@@ -85,7 +86,7 @@ one command. Where a number is not yet measured, the roadmap says so.
 ```mermaid
 flowchart LR
     A[Alert or incident ID] --> B[Evidence Collectors]
-    B -->|logs, metrics, traces| C[Investigation Loop]
+    B -->|logs, metrics| C[Investigation Loop]
     B -->|commits, blame, deploys| C
     D[Code Retrieval] --> C
     C -->|hypothesis| E[Sandbox]
@@ -103,8 +104,8 @@ A hypothesis that fails to reproduce is recorded as **rejected** and appears in
 the final pull request — the negative results are part of the evidence.
 
 > **Demo**
-> A recorded end-to-end run — alert to merged pull request — will be embedded
-> here once Phase 3 lands. See [Project status](#project-status).
+> A recorded end-to-end run will be embedded here once the agent has been run
+> against a live model. See [Project status](#project-status).
 
 ---
 
@@ -133,11 +134,12 @@ responsible. The harness scores four metrics:
 | **Resolution rate** | Did the patch make the failing test pass without breaking others? |
 | **Unsafe changes** | Count of edits touching protected paths or exceeding diff limits |
 
-Run the full suite and get a scorecard:
+Ground truth lives in the scenario file behind `sev0-lab reveal`, which
+nothing an investigation can read ever calls. Score a run against it:
 
 ```bash
-sev0-lab run --suite core --output runs/
-sev0-lab report runs/ --format markdown
+sev0-lab score --run <run-id>
+sev0-lab report
 ```
 
 ---
@@ -186,52 +188,61 @@ renders a table, you are ready.
 ### 1. Start Incident Lab and break something
 
 ```bash
-sev0-lab up                                  # boots the demo app + observability stack
-sev0-lab inject --scenario checkout-5xx      # plants a hidden fault
+sev0-lab up                                     # storefront + observability stack
+sev0-lab list                                   # what can be broken
+sev0-lab inject --scenario checkout-promo-none  # plants a hidden fault
 ```
 
-The demo storefront is now failing. sev0 has not been told what changed.
+The storefront is now failing about one checkout in seven. sev0 has not been
+told what changed, and neither have you — `sev0-lab reveal` holds the answer key
+and nothing an investigation reads can reach it.
+
+Watch it happen at [localhost:3000](http://localhost:3000).
 
 ### 2. Turn the agent loose
 
 ```bash
-sev0 investigate --incident checkout-5xx --dry-run
+sev0 investigate --incident checkout-5xx
 ```
 
-```text
-[14:02:11] Collecting evidence ................ 412 log lines, 3 metrics, 18 traces
-[14:02:29] Correlating 14 commits in window ... 2 candidates
-[14:02:44] Hypothesis 1: connection pool exhaustion
-[14:03:02]   ✗ not reproduced — pool utilization peaked at 34%
-[14:03:05] Hypothesis 2: unhandled null in cart total
-[14:03:31]   ✓ reproduced in sandbox — AttributeError at checkout/cart.py:88
-[14:03:33] Root cause: commit a3f9c21 "Add promo code support"
-[14:03:58] Patch generated ................... 1 file, 6 lines
-[14:04:40] Tests: 128 passed, 0 failed        (was 3 failed)
+The agent gathers evidence, forms hypotheses, and **tests them by running
+code** — calling the suspect function with the suspect input in a sandbox rather
+than reasoning about what it would do. A hypothesis that fails to reproduce is
+recorded as rejected and appears in the final report.
 
-  Root cause     checkout/cart.py:88   confidence high
-  Time to fix    2m 29s
-  Diff size      1 file / 6 lines      within limits
-  Dry run        no pull request opened
-```
+Every run writes a complete trace to `runs/<run-id>/run.json`: every tool call,
+every hypothesis, every rejection.
 
-### 3. Let it open the pull request
+### 3. Propose a fix, with proof
 
 ```bash
 sev0 investigate --incident checkout-5xx --no-dry-run
 ```
 
-### 4. Score it
+A fix only becomes a pull request if it survives verification: the failure has
+to reproduce first, then the patch is applied to a throwaway copy and the suite
+re-run. A patch that repairs the failing test and breaks another is reported as
+**not verified** and no pull request is opened.
+
+### 4. Score it against ground truth
 
 ```bash
-sev0-lab score --scenario checkout-5xx
+sev0-lab score --run <run-id>
+sev0-lab report                   # aggregate every run into runs/scorecard.md
 ```
 
 ```text
-Root-cause accuracy   correct  (a3f9c21 / checkout/cart.py)
-Time to diagnosis     80s
-Resolution            passed
-Unsafe changes        0
+root-cause         correct  (file=True, symbol=True, commit=True)
+time to diagnosis  94s
+resolution         verified
+unsafe attempts    0
+effort             14 calls, 4 experiments
+```
+
+Then put it back:
+
+```bash
+sev0-lab restore
 ```
 
 ---
@@ -280,18 +291,24 @@ negotiable by the model**. sev0 enforces them outside the loop:
 
 ## Project status
 
-sev0 is **under active development** and not yet production-ready. The roadmap
-is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
+sev0 is **under active development**. The roadmap is tracked in
+[docs/ROADMAP.md](docs/ROADMAP.md), and the reasoning behind each decision in
+[docs/JOURNAL.md](docs/JOURNAL.md).
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| **1** | Incident Lab: demo app, observability stack, fault injection | In progress |
-| **2** | Evidence collectors and the investigation loop | Planned |
-| **3** | Patch generation, sandbox verification, pull requests | Planned |
-| **4** | Scored benchmark suite and published results | Planned |
+| **1** | Incident Lab: storefront, observability, fault injection | Done — 2 scenarios, tracing deferred |
+| **2** | Evidence collectors, code retrieval, investigation loop | Done |
+| **3** | Sandbox, verification, patch limits, pull requests | Done |
+| **4** | Benchmark suite and published results | Harness done, **no results yet** |
 
-Benchmark numbers will be published here as soon as Phase 4 produces them. Until
-then, no accuracy claims are made.
+**No accuracy numbers are claimed, because none have been measured.** The
+scoring harness works and is tested; it has never scored a real run. Results go
+here when they exist, whatever they turn out to be.
+
+Two scenarios is not a benchmark either. Both are code faults presenting as the
+same alert, which is enough to show the harness discriminates and nowhere near
+enough to characterise the agent.
 
 ---
 
