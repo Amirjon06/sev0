@@ -70,6 +70,9 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["sev0", "services", "loadgen", "incident_lab"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

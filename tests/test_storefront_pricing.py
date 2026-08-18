@@ -46,6 +46,9 @@ def test_empty_cart_totals_zero() -> None:
     }
 
 
-@pytest.mark.parametrize(("code", "expected_total"), [("SAVE10", 2250), ("SAVE25", 1875), ("WELCOME", 2375)])
+@pytest.mark.parametrize(
+    ("code", "expected_total"),
+    [("SAVE10", 2250), ("SAVE25", 1875), ("WELCOME", 2375)],
+)
 def test_each_promotion_matches_its_advertised_percentage(code: str, expected_total: int) -> None:
     assert compute_total(ITEMS, code)["total_cents"] == expected_total

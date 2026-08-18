@@ -7,8 +7,8 @@ computed in `compute_total`, which is the single place a pricing bug can hide.
 from __future__ import annotations
 
 import os
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx

@@ -46,7 +46,7 @@ def doctor() -> None:
 
 @app.command()
 def investigate(
-    incident: str = typer.Option(..., "--incident", "-i", help="Incident identifier or alert name."),
+    incident: str = typer.Option(..., "--incident", "-i", help="Incident identifier or alert."),
     dry_run: bool = typer.Option(
         True, "--dry-run/--no-dry-run", help="Investigate without opening a pull request."
     ),
