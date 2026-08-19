@@ -21,7 +21,15 @@ def test_human_approval_defaults_to_required() -> None:
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # load_settings() loads .env without overriding, which is the right
+    # precedence for a real shell but makes these tests depend on whatever the
+    # developer happens to have exported -- or on an earlier test in the same
+    # session having loaded a .env of its own. Everything sev0 reads comes out
+    # first so the fixture file under test is the only source.
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    for name in [key for key in os.environ if key.startswith("SEV0_")]:
+        monkeypatch.delenv(name, raising=False)
 
 
 def test_unprefixed_credentials_reach_the_environment(

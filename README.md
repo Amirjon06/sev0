@@ -102,6 +102,15 @@ is a haystack rather than one obviously suspicious commit on top of scaffolding.
 Ground truth — service, file, symbol — lives in the same file, behind
 `sev0-lab reveal`. Nothing an investigation can read ever calls it.
 
+There are 23 scenarios across three fault families: code faults that crash,
+code faults that quietly return a wrong number, config faults where the code is
+correct and the deployment is not, and dependency faults where the failing
+service and the alerting service are different. Six are adversarial, each built
+to defeat one specific shortcut — a decoy commit larger and newer than the real
+fault, a warning that drowns the causal evidence, a first explanation that fits
+everything and reproduces nothing, a patch that fixes its test and breaks three
+others, and a tempting edit inside a protected path.
+
 Runs are scored on four things, kept separate on purpose:
 
 - **root-cause accuracy** — correct file *and* symbol; the commit is reported but not required
@@ -112,9 +121,14 @@ Runs are scored on four things, kept separate on purpose:
 An agent can name the right function and still ship a change that breaks
 something else. One combined number would hide exactly that.
 
-Both scenarios currently implemented fire the *same* alert with different causes,
-so the benchmark measures diagnosis rather than pattern matching against the
-symptom. There is a test asserting they stay indistinguishable from outside.
+Nine scenarios fire the *same* alert with different root causes, so the
+benchmark measures diagnosis rather than pattern matching against the symptom.
+A test asserts scenarios sharing an alert stay indistinguishable from outside,
+and further tests assert that no scenario leaks its answer through its id, its
+alert, or its commit messages.
+
+Full methodology, including how each scenario is validated and what the
+benchmark cannot tell you, is in [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Safety
 
@@ -206,6 +220,41 @@ sev0-lab restore
 sev0-lab down
 ```
 
+## Running The Benchmark
+
+One scenario tells you very little. The benchmark runs the suite, restoring
+between every scenario so a failure cannot contaminate the next measurement.
+
+```bash
+sev0-lab benchmark --dry-run
+```
+
+That prints the plan and calls no model, which is how you size an invocation
+before paying for one. Then:
+
+```bash
+sev0-lab benchmark                                  # whole suite, one trial each
+sev0-lab benchmark --family config                  # one fault family
+sev0-lab benchmark --runs 3                         # three trials per scenario
+sev0-lab benchmark --mode full,no-execution         # compare against an ablation
+sev0-lab benchmark --mode baseline-static           # compare against no loop at all
+```
+
+Results land in `runs/benchmarks/` as JSON and as a Markdown report. Every rate
+carries its counts, and each trial records the model, the mode, the sev0
+revision, token usage and cost so a number can be traced back to the run that
+produced it.
+
+### Baselines and ablations
+
+`baseline-static` gives the same model the same evidence — assembled by the same
+collectors — in a single call, with no iteration and no execution. The gap it
+leaves is the investigation loop, which is the thing worth measuring.
+
+The ablations remove one component each: `no-execution`, `no-history`,
+`no-retrieval`. They are capability gating in one place, not a second copy of
+the agent, and none of them weakens the safety rails.
+
 ## Opening A Pull Request
 
 The target repository is scratch and has no remote, so publish it once:
@@ -231,7 +280,7 @@ request. If it does not verify, nothing is proposed.
 
 ```bash
 sev0 doctor
-sev0 investigate --incident <id> [--alert TEXT] [--no-dry-run] [--local-sandbox]
+sev0 investigate --incident <id> [--alert TEXT] [--no-dry-run] [--local-sandbox] [--mode MODE]
 
 sev0-lab up [--fresh]
 sev0-lab down [--volumes]
@@ -242,6 +291,7 @@ sev0-lab restore
 sev0-lab publish [--repo owner/name]
 sev0-lab score --run <run-id> [--scenario <id>]
 sev0-lab report [--scenario <id>] [--output PATH]
+sev0-lab benchmark [--scenario ids] [--family f] [--mode modes] [--runs N] [--dry-run]
 sev0-lab reveal --scenario <id>
 ```
 
@@ -251,6 +301,7 @@ What the less obvious ones do:
 - `status` shows what is injected, whether the tree is at baseline, and which containers are running
 - `publish` mirrors the local target repository to GitHub so a fix branch has somewhere to go
 - `report` aggregates every scored run into `runs/scorecard.md`
+- `benchmark` runs the suite across modes and repeated trials
 - `reveal` prints the answer key. Never call it from anything the agent can read
 
 ## Configuration
@@ -271,26 +322,36 @@ Never commit `.env`.
 
 ## Project Status
 
-All four planned phases have working, tested code: 188 tests, ruff clean, mypy
+All four planned phases have working, tested code: 484 tests, ruff clean, mypy
 strict. The full pipeline has run end to end against a live model — alert to root
-cause to verified patch to draft pull request.
+cause to verified patch to draft pull request — and the evaluation harness around
+it is complete: 23 scenarios, a reproducible runner with repeated trials, one
+baseline, and three ablations.
 
-It is not a benchmark yet, and the README will not pretend otherwise. Only two
-scenarios exist, both code faults in the same service, and only a handful of runs
-have been scored. That is enough to show the harness discriminates between two
-causes hiding behind one alert. It is nowhere near enough to characterise the
-agent, so no aggregate accuracy figure is claimed here.
+**The benchmark has not been run.** The suite, the runner, the baseline and the
+ablations are implemented and tested, and no aggregate result exists because
+running 23 scenarios across modes and repeated trials costs real money and has
+not been done. There are no numbers on this page for that reason, and there
+will not be until they come from actual runs.
+
+What has been measured is four single runs from before the suite existed: they
+diagnosed correctly and one produced a verified fix and a draft pull request.
+That is a demonstration that the pipeline works end to end. It is not a
+characterisation of anything.
 
 Known gaps:
 
-- **Scenario coverage.** The config and infrastructure fault families in the
-  roadmap are specified and unwritten. So is any fault that produces a wrong
-  answer without an error rate — an off-by-one on a pricing threshold is a wrong
-  total, not a crash, and nothing in the current telemetry would surface it.
 - **No distributed tracing.** There is no Tempo collector and no OpenTelemetry
-  instrumentation. A `tempo_url` setting exists in config and nothing reads it.
-  This is unrelated to the per-run execution records under `runs/`, which are
-  fully implemented and are a different thing with a confusingly similar name.
+  instrumentation, so no scenario can require following a request across a
+  service boundary by trace id. Two scenarios approximate that shape with
+  per-service metrics, which is a weaker signal. This is unrelated to the
+  per-run execution records under `runs/`, which are fully implemented and are a
+  different thing with a confusingly similar name.
+- **One target application, and faults that were authored rather than
+  observed.** Everything is one Python microservice storefront, and the bugs
+  were written by the same person who built the agent. Real ones are stranger.
+- **No held-out set.** The prompt was iterated while these scenarios existed,
+  so any result describes performance on problems the author had seen.
 - **Confidence is unvalidated.** The agent reports a confidence level with every
   conclusion. Whether it correlates with being right has not been measured.
 

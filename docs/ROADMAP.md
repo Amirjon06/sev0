@@ -18,10 +18,10 @@ observe it breaking. No agent yet.
 | --- | --- | --- |
 | 1.1 | ~~Build a multi-service demo app in `incident_lab/app/`~~ **Done** | `docker compose up` serves a working storefront |
 | 1.2 | ~~Add the observability stack (Loki, Prometheus, Grafana)~~ **Done** | Dashboards show live traffic |
-| 1.2b | Add distributed tracing (Tempo + OpenTelemetry spans) | Deferred — see journal |
+| 1.2b | Add distributed tracing (Tempo + OpenTelemetry spans) | Deferred — see journal and docs/EVALUATION.md |
 | 1.3 | ~~Write a load generator so the app has steady baseline traffic~~ **Done** | Metrics are non-flat at rest |
 | 1.4 | ~~Build the fault injection interface (`inject` / `restore`)~~ **Done** | `sev0-lab inject --scenario X` breaks the app reproducibly |
-| 1.5 | ~~Author the first code-fault scenarios with ground truth~~ **2 done** | `incident_lab/scenarios/*.yaml` with commit, file, symbol |
+| 1.5 | ~~Author scenarios with ground truth~~ **23 done** | `incident_lab/scenarios/*.yaml` across code, config, and infra families |
 | 1.6 | ~~Build the `sev0-lab` CLI (`up`, `down`, `inject`, `restore`, `status`)~~ **Done** | One command to break and unbreak |
 
 **Exit criterion:** you can run `sev0-lab inject --scenario checkout-5xx`, watch
@@ -82,12 +82,24 @@ Record the GIF for the README here.
 
 | # | Task | Deliverable |
 | --- | --- | --- |
-| 4.1 | Expand to 15–20 scenarios across code, config, and infra faults — **2 of ~18** | `--suite core` |
+| 4.1 | ~~Expand to 15–20 scenarios across code, config, and infra faults~~ **23 done** | `incident_lab/scenarios/*.yaml` |
 | 4.2 | ~~Scoring harness for the four metrics~~ **Done** | `sev0-lab score`, `sev0-lab report` |
-| 4.3 | Deterministic replay so runs are comparable | Seeded, versioned scenarios |
-| 4.4 | Ablation studies (no traces, no git history, smaller model) | Which evidence actually matters |
-| 4.5 | ~~Markdown scorecard~~ **Done** — HTML deferred | `runs/scorecard.md` |
-| 4.6 | Publish results and a write-up — **no numbers exist yet** | Numbers in the README |
+| 4.3 | ~~Reproducible multi-scenario execution with repeated trials~~ **Done** | `sev0-lab benchmark --runs N` |
+| 4.4 | ~~Ablations: no execution, no history, no retrieval~~ **Done** | `--mode`, gated in `agent/capabilities.py` |
+| 4.5 | ~~A baseline that is not sev0~~ **Done** | `--mode baseline-static` |
+| 4.6 | ~~Adversarial scenarios~~ **6 done** | decoy commit, decoy logs, plausible decoy, regression trap, protected path, shared alerts |
+| 4.7 | ~~Markdown and machine-readable reports~~ **Done** | `runs/benchmarks/<stamp>.{json,md}` |
+| 4.8 | Run the benchmark and publish the results — **not run** | Numbers in the README |
+
+Everything except 4.8 is implemented and tested. 4.8 is deliberately separate:
+running 23 scenarios across modes and repeated trials costs real money, and
+building the harness is not the same decision as spending it.
+
+Deferred, with reasons in [EVALUATION.md](EVALUATION.md#limitations):
+
+- a fault family requiring distributed tracing, which needs 1.2b first
+- a fault with no observable signal at all, which needs a different signal
+- a held-out scenario set, which needs enough scenarios to split
 
 **Exit criterion:** a table of measured results, and an honest account of the
 failure modes.

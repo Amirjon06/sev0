@@ -15,6 +15,44 @@ Format:
 
 ---
 
+## 2026-08-19 — A benchmark, and the things it refuses to say
+
+**Tried:** Turning two scenarios into an evaluation harness: a suite, a runner,
+a baseline, ablations, and reporting.
+**Blocked immediately:** the storefront had one meaningfully testable function,
+so every fault worth writing landed in compute_total. Twenty variations of one
+bug is one scenario written twenty times. Fixed by giving the application real
+surface area first — tax, line merging, stock, search, idempotency, a retry
+predicate, an error mapping — each with tests that assert a rule a shopper would
+recognise rather than what the code currently does.
+**Decided:** business metrics are not decoration. A fault that returns a wrong
+number leaves the HTTP metrics untouched, and without a signal an entire class
+of real bug cannot be posed at all. Four scenarios are silent by design and
+would be unsolvable without them.
+**Decided:** tunables move into a committed config file read at boot. A setting
+that can change without leaving a trace in history is a setting nobody can
+debug, which would have made the config family unfair rather than hard.
+**Decided:** ablations are capability gating in one place, never a second copy
+of the agent. A fork drifts, and a comparison against drifted code measures the
+drift. The prompt is assembled from the same flags, because telling a model to
+run experiments it has no tools for measures how long it takes to notice.
+**Decided:** safety is never ablated. Every mode keeps the sandbox, the patch
+limits, the protected paths and reproduce-before-verify, and a test asserts no
+mode grants what full mode does not. A comparison against a more dangerous
+system is a comparison of a different system.
+**Decided:** cost is reported only for models with a published price written
+down here, and is otherwise blank. A plausible figure nobody can check ends up
+in a table someone quotes; a blank is visibly missing.
+**Decided:** p95 is withheld below twenty samples. At eight it is the largest
+value wearing a percentile's name.
+**Caught by its own tests:** one scenario's ground-truth symbol was `checkout`
+and its alert was `checkout-5xx`, so the alert named the answer. Extracting the
+mapping into `charge_error` fixed the leak and made the behaviour testable,
+which it should have been anyway.
+**Honest status:** the benchmark has not been run. Everything is implemented and
+tested against fixtures; no aggregate number exists, and none is claimed.
+Running it costs real money and that is a separate decision from building it.
+
 ## 2026-08-19 — Alert to pull request, unattended
 
 **Tried:** The last unproven link. A verified fix was being committed to a local
