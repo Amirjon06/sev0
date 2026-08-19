@@ -12,7 +12,7 @@ from sev0.agent.state import RunState
 from sev0.agent.tools import Toolbox
 from sev0.collectors.logs import LokiCollector
 from sev0.collectors.metrics import PrometheusCollector
-from sev0.config import Settings, load_settings
+from sev0.config import Settings, anthropic_api_key, load_settings
 from sev0.git_ops import pull_request as pr
 from sev0.git_ops import repository as repo_ops
 from sev0.sandbox.patch import PatchBuilder, PatchLimits
@@ -42,6 +42,11 @@ def doctor() -> None:
     table.add_column("Component", style="bold")
     table.add_column("Value")
 
+    key = anthropic_api_key()
+    table.add_row(
+        "API key",
+        f"set (...{key[-4:]})" if key else "[red]missing[/red]",
+    )
     table.add_row("Model", settings.model)
     table.add_row("Target repository", str(settings.target_repo))
     table.add_row("Repository", settings.repo or "[yellow]not configured[/yellow]")
@@ -113,11 +118,18 @@ def _build_client() -> object:
         console.print("[red]The anthropic package is not installed.[/red]")
         raise typer.Exit(code=1) from None
 
+    # Checked here rather than left to the SDK. Anthropic() constructs happily
+    # without a key and only complains on the first request, which surfaces as
+    # a traceback from inside the library after the run has already started.
+    key = anthropic_api_key()
+    if key is None:
+        console.print("[red]No API key.[/red] Set ANTHROPIC_API_KEY in .env.")
+        raise typer.Exit(code=1)
+
     try:
-        return anthropic.Anthropic()
+        return anthropic.Anthropic(api_key=key)
     except Exception as exc:  # noqa: BLE001 - the message is the useful part
         console.print(f"[red]Could not create an Anthropic client:[/red] {exc}")
-        console.print("Set ANTHROPIC_API_KEY in your .env file.")
         raise typer.Exit(code=1) from None
 
 
@@ -211,6 +223,12 @@ def investigate(
         loop.run(build_brief(incident, alert or None))
     except KeyboardInterrupt:
         state.abandon("interrupted")
+    except Exception as exc:  # noqa: BLE001 - the trace is worth more than the stack
+        # A run that dies partway through has still gathered evidence, and the
+        # trace is where you find out what it was doing when it died. Losing
+        # that to a stack trace from inside the SDK is the wrong trade.
+        state.abandon(f"{type(exc).__name__}: {exc}")
+        console.print(f"[red]The run failed:[/red] {exc}\n")
 
     trace = state.save(settings.run_dir)
     console.print(state.summary())

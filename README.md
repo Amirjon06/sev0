@@ -103,9 +103,9 @@ hypothesis, tries to reproduce it in the sandbox, and feeds the result back in.
 A hypothesis that fails to reproduce is recorded as **rejected** and appears in
 the final pull request — the negative results are part of the evidence.
 
-> **Demo**
-> A recorded end-to-end run will be embedded here once the agent has been run
-> against a live model. See [Project status](#project-status).
+Two live runs and what they scored are in
+[Project status](#project-status). A recorded end-to-end run will be embedded
+here once the agent has produced a verified fix rather than a diagnosis.
 
 ---
 
@@ -231,12 +231,16 @@ sev0-lab score --run <run-id>
 sev0-lab report                   # aggregate every run into runs/scorecard.md
 ```
 
+Real output from the run recorded in [Project status](#project-status):
+
 ```text
+scenario           checkout-shipping-lookup
+run                46e30c24ba67
 root-cause         correct  (file=True, symbol=True, commit=True)
-time to diagnosis  94s
-resolution         verified
+time to diagnosis  26s
+resolution         not verified
 unsafe attempts    0
-effort             14 calls, 4 experiments
+effort             11 calls, 2 experiments
 ```
 
 Then put it back:
@@ -255,7 +259,7 @@ Copy `.env.example` and edit. **Never commit `.env`.**
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `ANTHROPIC_API_KEY` | — | **Required.** Model provider credential |
-| `SEV0_MODEL` | `claude-sonnet-4-6` | Model backing the investigation loop |
+| `SEV0_MODEL` | `claude-sonnet-5` | Model backing the investigation loop |
 | `GITHUB_TOKEN` | — | Required only for pull request creation |
 | `SEV0_REPO` | — | Target repository as `owner/name` |
 | `SEV0_LOKI_URL` | `http://localhost:3100` | Log source |
@@ -300,15 +304,43 @@ sev0 is **under active development**. The roadmap is tracked in
 | **1** | Incident Lab: storefront, observability, fault injection | Done — 2 scenarios, tracing deferred |
 | **2** | Evidence collectors, code retrieval, investigation loop | Done |
 | **3** | Sandbox, verification, patch limits, pull requests | Done |
-| **4** | Benchmark suite and published results | Harness done, **no results yet** |
+| **4** | Benchmark suite and published results | Harness done, **2 runs measured** |
 
-**No accuracy numbers are claimed, because none have been measured.** The
-scoring harness works and is tested; it has never scored a real run. Results go
-here when they exist, whatever they turn out to be.
+### Measured so far
 
-Two scenarios is not a benchmark either. Both are code faults presenting as the
-same alert, which is enough to show the harness discriminates and nowhere near
-enough to characterise the agent.
+Two live runs against `claude-sonnet-5`, one per scenario, scored against
+ground truth the agent could not read:
+
+| Metric | Value |
+| --- | --- |
+| Root-cause accuracy | 2 / 2 — correct file, symbol, and commit on both |
+| Median time to diagnosis | 27s |
+| Verified resolution rate | 0 / 2 |
+| Unsafe attempts | 0 |
+| Runs that executed nothing | 0 |
+
+**Two runs is not a benchmark.** It is enough to show the harness runs end to
+end and discriminates between two faults hiding behind one alert; it is nowhere
+near enough to characterise the agent. Read the numbers as a demonstration.
+
+Three caveats stated plainly, because they are the ones a reader would
+otherwise have to find out the hard way:
+
+- **Nothing was repaired.** Both runs diagnosed and stopped without proposing
+  a patch, so `try_patch` → verify → pull request has never been exercised by a
+  model. That machinery is built and tested, and it is untested in anger. The
+  resolution rate says 0% for that reason and not because a fix failed.
+- **Confidence looks uncalibrated.** The first run was entirely correct and
+  reported low confidence. Two samples cannot say which way that generalises.
+- **Both faults are code faults in the same neighbourhood.** Config and
+  infrastructure families are specified and unwritten.
+
+Scoring is reproducible from the saved traces:
+
+```bash
+sev0-lab score --run <run-id>
+sev0-lab report
+```
 
 ---
 

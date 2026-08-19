@@ -295,3 +295,28 @@ class TestInvestigationLoop:
         sent = client.messages.calls[0]
         assert "on-call software engineer" in sent["system"]
         assert {tool["name"] for tool in sent["tools"]} >= {"search_code", "conclude"}
+
+    def test_thinking_blocks_are_returned_intact(self, toolbox: Toolbox, state: RunState) -> None:
+        # The API verifies the signature on a thinking block when it comes
+        # back. Rebuilding the block from the fields we happen to know about
+        # drops it, and the second turn is rejected with a 400.
+        class SdkBlock:
+            def __init__(self, **fields: Any) -> None:
+                self.fields = fields
+                self.type = fields["type"]
+
+            def model_dump(self, exclude_none: bool = False) -> dict[str, Any]:
+                return dict(self.fields)
+
+        thought = SdkBlock(type="thinking", thinking="the cart looks wrong", signature="sig-abc")
+        client = ScriptedClient(
+            Response(thought, call("read_logs", service="cart")),
+            Response(text("done")),
+        )
+
+        InvestigationLoop(client, toolbox, state).run(build_brief("checkout-5xx"))
+
+        second = client.messages.calls[1]["messages"]
+        assistant = next(m for m in second if m["role"] == "assistant")
+        block = assistant["content"][0]
+        assert block["signature"] == "sig-abc"

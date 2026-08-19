@@ -79,13 +79,22 @@ class ModelClient(Protocol):
 
 
 def _block_to_dict(block: Any) -> dict[str, Any]:
+    """Turn a response block into something that can be sent back.
+
+    Serialised whole rather than field by field. Thinking blocks carry a
+    signature the API verifies when they are returned, and any block type
+    added later will carry something similar; a hand-written converter drops
+    what it does not know about and the next turn is rejected.
+    """
+    dump = getattr(block, "model_dump", None)
+    if callable(dump):
+        return dict(dump(exclude_none=True))
+
     kind = getattr(block, "type", None)
     if kind == "text":
         return {"type": "text", "text": block.text}
     if kind == "tool_use":
         return {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
-    if kind == "thinking":
-        return {"type": "thinking", "thinking": getattr(block, "thinking", "")}
     return {"type": "text", "text": str(block)}
 
 
@@ -95,7 +104,7 @@ class InvestigationLoop:
         client: ModelClient,
         toolbox: Toolbox,
         state: RunState,
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-sonnet-5",
         max_tool_calls: int = 60,
         max_turns: int = 40,
         max_tokens: int = 4096,

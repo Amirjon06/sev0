@@ -22,6 +22,7 @@ SOURCE_DIR = APP_DIR
 RUN_DIR = REPO_ROOT / "runs"
 TARGET_DIR = RUN_DIR / "target"
 STATE_FILE = RUN_DIR / "lab-state.json"
+LEDGER_FILE = RUN_DIR / "injections.jsonl"
 DEFAULT_SCORECARD = RUN_DIR / "scorecard.md"
 
 app = typer.Typer(
@@ -61,6 +62,46 @@ def write_state(state: dict[str, object]) -> None:
 
 def clear_state() -> None:
     STATE_FILE.unlink(missing_ok=True)
+
+
+def append_ledger(entry: dict[str, object]) -> None:
+    """Record an injection or a restore, permanently.
+
+    lab-state.json is deleted on restore, so it says what is broken now and
+    nothing about what was broken an hour ago. Scoring a run needs the second
+    thing: which fault was live when that run started.
+    """
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    with LEDGER_FILE.open("a") as handle:
+        handle.write(json.dumps(entry) + "\n")
+
+
+def read_ledger() -> list[dict[str, object]]:
+    if not LEDGER_FILE.exists():
+        return []
+    entries = []
+    for line in LEDGER_FILE.read_text().splitlines():
+        if line.strip():
+            entries.append(json.loads(line))
+    return entries
+
+
+def scenario_live_at(moment: str, ledger: list[dict[str, object]]) -> str | None:
+    """Which scenario was injected at the given instant, if any.
+
+    The ledger is append-only and chronological, so the last entry at or before
+    the moment describes the state the run was looking at. A restore entry
+    carries no scenario, which is how a run against a healthy system reads as
+    unscoreable rather than as a wrong answer.
+    """
+    live: str | None = None
+    for entry in ledger:
+        at = str(entry.get("at", ""))
+        if not at or at > moment:
+            break
+        scenario = entry.get("scenario")
+        live = str(scenario) if scenario else None
+    return live
 
 
 def ensure_target() -> Path:
@@ -184,13 +225,9 @@ def inject(
     )
 
     head = target_repo.head(repo)
-    write_state(
-        {
-            "scenario": scenario.id,
-            "commit": head.sha,
-            "injected_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        }
-    )
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    write_state({"scenario": scenario.id, "commit": head.sha, "injected_at": now})
+    append_ledger({"at": now, "scenario": scenario.id, "commit": head.sha})
 
     if rebuild and scenario.rebuild:
         console.print(f"Rebuilding {', '.join(scenario.rebuild)} ...")
@@ -211,6 +248,8 @@ def restore(
 
     target_repo.reset_to_baseline(repo)
     clear_state()
+    if state.get("scenario"):
+        append_ledger({"at": datetime.now(UTC).isoformat(timespec="seconds"), "scenario": None})
 
     services: tuple[str, ...] = ()
     if state.get("scenario"):
@@ -241,10 +280,23 @@ def _load_scores(run_dir: Path, scenario_id: str | None) -> list[Score]:
 
 
 def _scenario_for(state: RunState, scenarios: dict[str, model.Scenario]) -> str | None:
-    """Match a run to a scenario by the alert it was given."""
-    for scenario in scenarios.values():
-        if scenario.alert == state.incident or scenario.id == state.incident:
-            return scenario.id
+    """Match a run to the fault that was live when it started.
+
+    Matching by alert was wrong, and wrong in the way the benchmark was built
+    to expose: both scenarios deliberately fire checkout-5xx, so the lookup
+    always returned whichever one was defined first and every second-scenario
+    run scored against the wrong answer key. The ledger knows what was
+    actually injected; the alert never did.
+    """
+    if state.started_at:
+        live = scenario_live_at(state.started_at, read_ledger())
+        if live is not None:
+            return live if live in scenarios else None
+
+    # Runs recorded before the ledger existed, and runs named after a scenario
+    # directly. Deliberately not falling back to the alert.
+    if state.incident in scenarios:
+        return state.incident
     return None
 
 

@@ -15,6 +15,37 @@ Format:
 
 ---
 
+## 2026-08-19 — First live runs, and the benchmark catching itself
+
+**Tried:** Ran the agent against a live model for the first time, once per
+scenario. Three bugs fell out before a single run completed.
+**Result:** Correct on both. Right file, right symbol, right commit, 28s and
+26s, no unsafe attempts, and on the shipping fault it traced the failure across
+a service boundary unprompted — cart raises the KeyError, the gateway relays it
+as a 500 on /checkout, and it said so.
+**Bug:** ANTHROPIC_API_KEY was parsed out of .env and discarded. Settings only
+reads SEV0_-prefixed keys, and the SDK reads os.environ. Nothing bridged them.
+**Bug:** thinking blocks were rebuilt field by field, which dropped the
+signature the API verifies on return. Turn one succeeded, turn two was
+rejected. Response blocks are now serialised whole.
+**Bug, and the one worth remembering:** scoring matched a run to a scenario by
+its alert. Both scenarios fire checkout-5xx *on purpose* — that was the whole
+design — so the lookup returned whichever was defined first and the second run
+was graded against the wrong answer key and reported as wrong. The benchmark's
+own premise broke its scorer. There is now an append-only ledger of injections
+and restores, and a run is matched to whatever fault was live when it started.
+**Decided:** a run from a healthy window scores as unscoreable, not as wrong.
+Between a restore and the next injection there is no ground truth, and
+inventing one grades an agent against a fault that was not there.
+**Honest status:** the repair half has still never run. Both investigations
+diagnosed and stopped without calling try_patch, so verification and pull
+request creation remain tested against a scripted client and unexercised by a
+model. Resolution rate reads 0% for that reason, not because a fix failed.
+**Noted:** the first run was completely correct and reported *low* confidence.
+Two samples say nothing about calibration, but it is the kind of thing that
+would quietly make the confidence field useless, so it goes in the log now
+rather than being noticed in twenty runs' time.
+
 ## 2026-08-18 — A second scenario, and shipping
 
 **Tried:** A second fault. Ran into the real constraint first: the storefront's

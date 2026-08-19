@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from incident_lab.cli import scenario_live_at
 from incident_lab.scenarios.model import GroundTruth, Scenario
 from incident_lab.scoring import Score, Scorecard, score_run
 from sev0.agent.state import Confidence, ProposedFix, RootCause, RunState
@@ -228,3 +229,43 @@ class TestRoundTrip:
 
         reloaded = RunState.load(trace)
         assert score_run(reloaded, scenario) == score_run(original, scenario)
+
+
+class TestMatchingRunsToScenarios:
+    """Which answer key a run is graded against.
+
+    This is where the benchmark can quietly lie to itself. Both scenarios fire
+    the same alert on purpose, so anything that identifies a scenario by its
+    symptom will grade half the runs against the wrong ground truth and report
+    the agent as wrong when it was right.
+    """
+
+    @pytest.fixture
+    def ledger(self) -> list[dict[str, object]]:
+        return [
+            {"at": "2026-08-19T10:00:00+00:00", "scenario": "checkout-promo-none"},
+            {"at": "2026-08-19T10:30:00+00:00", "scenario": None},
+            {"at": "2026-08-19T11:00:00+00:00", "scenario": "checkout-shipping-lookup"},
+        ]
+
+    def test_a_run_matches_the_fault_that_was_live(self, ledger: list[dict[str, object]]) -> None:
+        assert scenario_live_at("2026-08-19T10:15:00+00:00", ledger) == "checkout-promo-none"
+        assert scenario_live_at("2026-08-19T11:20:00+00:00", ledger) == "checkout-shipping-lookup"
+
+    def test_two_scenarios_behind_one_alert_are_told_apart(
+        self, ledger: list[dict[str, object]]
+    ) -> None:
+        first = scenario_live_at("2026-08-19T10:15:00+00:00", ledger)
+        second = scenario_live_at("2026-08-19T11:20:00+00:00", ledger)
+        assert first != second
+
+    def test_a_healthy_window_matches_nothing(self, ledger: list[dict[str, object]]) -> None:
+        # Between a restore and the next injection there is no ground truth,
+        # and inventing one would score a run against a fault that was not
+        # there.
+        assert scenario_live_at("2026-08-19T10:45:00+00:00", ledger) is None
+
+    def test_a_run_before_any_injection_matches_nothing(
+        self, ledger: list[dict[str, object]]
+    ) -> None:
+        assert scenario_live_at("2026-08-19T09:00:00+00:00", ledger) is None

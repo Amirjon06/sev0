@@ -6,8 +6,10 @@ one auditable place rather than scattered through the call sites.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -21,8 +23,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Model provider
-    model: str = "claude-sonnet-4-6"
+    # Model provider. Sonnet is the default because the investigation loop is
+    # long-horizon tool use; Haiku is roughly a tenth the cost and useful for
+    # shaking out prompt and tool problems before spending on a real run.
+    model: str = "claude-sonnet-5"
 
     # Git hosting
     repo: str | None = None
@@ -64,5 +68,26 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
-    """Load settings from the environment."""
+    """Load settings from the environment.
+
+    The .env file is also loaded into the process environment. Settings only
+    reads SEV0_-prefixed keys, so provider credentials that live in the same
+    file -- ANTHROPIC_API_KEY, GITHUB_TOKEN -- would otherwise be parsed and
+    discarded, and the SDK reading os.environ would find nothing.
+    """
+    # The path is explicit. load_dotenv() with no argument searches upward from
+    # the file that called it, which for an installed package is site-packages
+    # rather than the project the user is standing in.
+    load_dotenv(dotenv_path=".env", override=False)
     return Settings()
+
+
+def anthropic_api_key() -> str | None:
+    """The provider credential, or None if it was never set."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    # The shipped .env.example carries a placeholder. Treating it as a real
+    # key means the failure arrives as a 401 several seconds into a run
+    # instead of before the first call.
+    if not key or key.startswith("sk-ant-...") or key == "sk-ant-":
+        return None
+    return key
