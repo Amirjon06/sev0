@@ -1,0 +1,53 @@
+id: catalog-stock-boundary
+title: Add-to-cart rejections after a stock check change
+family: code
+alert: checkout-4xx
+difficulty: medium
+tags: [boundary]
+
+summary: |
+  An inequality in the availability check is tightened by one, so the last
+  unit of any product can no longer be sold. Popular items sit at low stock
+  most of the time, so a steady share of add-to-cart calls start returning
+  409 and those shoppers never reach checkout.
+
+commit:
+  author: Priya Raman <priya@storefront.example>
+  message: |
+    fix(catalog): Keep a unit back from the last of a line
+
+    We were selling stock down to zero and then taking orders we could not
+    fill from the warehouse count alone.
+
+edits:
+  - file: services/catalog/main.py
+    find: |2
+          stock = int(product["stock"])  # type: ignore[call-overload]
+          return wanted <= stock
+    replace: |2
+          stock = int(product["stock"])  # type: ignore[call-overload]
+          return wanted < stock
+
+rebuild: [catalog]
+
+failing_tests:
+  - tests/test_services.py::TestAvailability::test_the_last_unit_can_be_sold
+
+ground_truth:
+  service: catalog
+  file: services/catalog/main.py
+  symbol: is_available
+  summary: |
+    The comparison excludes the final unit, so a product with stock N can
+    only sell N-1. Anything at stock 1 becomes unsellable entirely.
+
+notes:
+  signal: |
+    catalog 409 rate rises; cart relays it and gateway 4xx follows. catalog
+    logs "insufficient stock" for products that visibly have stock.
+  path: |
+    The log line names products whose listed stock is greater than the
+    quantity requested, which is a contradiction the availability check
+    owns.
+  reproduction: |
+    is_available({"stock": 1}, 1) returns False. The last-unit test fails.

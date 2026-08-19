@@ -1,0 +1,57 @@
+id: catalog-empty-listing
+title: Product listing returns nothing for an unfiltered browse
+family: code
+alert: catalog-empty
+difficulty: medium
+tags: [inverted-condition]
+
+summary: |
+  A tidy-up of the search filter inverts the empty-query case, so browsing
+  without a search term returns no products at all. Nothing errors; the
+  storefront simply looks empty, and carts stop being created.
+
+commit:
+  author: Priya Raman <priya@storefront.example>
+  message: |
+    refactor(catalog): Tighten the search predicate
+
+    The double negative in the filter was hard to read. Same behaviour,
+    stated the way round a person would say it.
+
+edits:
+  - file: services/catalog/main.py
+    find: |2
+          matches = [
+              product
+              for product in PRODUCTS.values()
+              if not needle or needle in str(product["name"]).lower()
+          ]
+    replace: |2
+          matches = [
+              product
+              for product in PRODUCTS.values()
+              if needle and needle in str(product["name"]).lower()
+          ]
+
+rebuild: [catalog]
+
+failing_tests:
+  - tests/test_services.py::TestSearch::test_an_empty_query_lists_everything
+
+ground_truth:
+  service: catalog
+  file: services/catalog/main.py
+  symbol: search_products
+  summary: |
+    The predicate requires a non-empty needle, so an unfiltered listing
+    matches nothing instead of everything.
+
+notes:
+  signal: |
+    catalog returns 200 with an empty product array. Downstream, cart
+    additions fall to near zero and so do orders.
+  path: |
+    The listing endpoint succeeds while returning nothing, which points at
+    the filter rather than at availability or the datastore.
+  reproduction: |
+    search_products("") returns an empty list. The empty-query test fails.

@@ -57,37 +57,120 @@ class GroundTruth:
 
 
 @dataclass(frozen=True)
+class Notes:
+    """Why this scenario is solvable, and how.
+
+    Written for whoever maintains the benchmark, not for the agent. A scenario
+    nobody could solve from the available evidence is not measuring debugging
+    ability, it is measuring luck, and the only way to know which one you have
+    built is to write down the intended path and check it exists.
+
+    This never leaves the sev0 repository. The target repository the agent
+    investigates is built from the storefront source alone.
+    """
+
+    signal: str = ""
+    path: str = ""
+    reproduction: str = ""
+
+
+@dataclass(frozen=True)
+class Change:
+    """One commit's worth of edits.
+
+    A scenario is a sequence of these rather than a single change, because the
+    interesting adversarial cases need a decoy: a later commit that looks far
+    more suspicious than the one that actually broke production.
+    """
+
+    message: str
+    author: str
+    edits: tuple[Edit, ...]
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Change:
+        return cls(
+            message=raw["message"].strip(),
+            author=raw["author"],
+            edits=tuple(Edit(**e) for e in raw["edits"]),
+        )
+
+
+@dataclass(frozen=True)
 class Scenario:
     id: str
     title: str
     family: str
     summary: str
     alert: str
-    commit_message: str
-    author: str
-    edits: tuple[Edit, ...]
+    changes: tuple[Change, ...]
     ground_truth: GroundTruth
     rebuild: tuple[str, ...] = ()
     failing_tests: tuple[str, ...] = field(default=())
+    tags: tuple[str, ...] = field(default=())
+    difficulty: str = "medium"
+    notes: Notes = field(default_factory=Notes)
+
+    @property
+    def edits(self) -> tuple[Edit, ...]:
+        """Every edit the scenario makes, across all of its commits."""
+        return tuple(edit for change in self.changes for edit in change.edits)
+
+    @property
+    def commit_message(self) -> str:
+        """The message of the change that actually planted the fault."""
+        return self.changes[0].message if self.changes else ""
+
+    @property
+    def author(self) -> str:
+        return self.changes[0].author if self.changes else ""
+
+    @property
+    def is_adversarial(self) -> bool:
+        return "adversarial" in self.tags
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Scenario:
         try:
+            changes = cls._changes_from(raw)
+            if not changes:
+                raise ScenarioError(f"scenario {raw.get('id', '?')} makes no changes")
+
             return cls(
                 id=raw["id"],
                 title=raw["title"],
                 family=raw["family"],
                 summary=raw["summary"].strip(),
                 alert=raw["alert"],
-                commit_message=raw["commit"]["message"].strip(),
-                author=raw["commit"]["author"],
-                edits=tuple(Edit(**e) for e in raw["edits"]),
+                changes=changes,
                 ground_truth=GroundTruth(**raw["ground_truth"]),
                 rebuild=tuple(raw.get("rebuild", ())),
                 failing_tests=tuple(raw.get("failing_tests", ())),
+                tags=tuple(raw.get("tags", ())),
+                difficulty=raw.get("difficulty", "medium"),
+                notes=Notes(**raw.get("notes", {})),
             )
         except KeyError as exc:
             raise ScenarioError(f"scenario {raw.get('id', '?')} is missing {exc}") from exc
+
+    @staticmethod
+    def _changes_from(raw: dict[str, Any]) -> tuple[Change, ...]:
+        """Accept either one commit or a sequence of them.
+
+        The single-commit form is what most scenarios need and reads better for
+        them; requiring every scenario to declare a list would be ceremony for
+        the common case.
+        """
+        if "commits" in raw:
+            return tuple(Change.from_dict(entry) for entry in raw["commits"])
+
+        return (
+            Change(
+                message=raw["commit"]["message"].strip(),
+                author=raw["commit"]["author"],
+                edits=tuple(Edit(**e) for e in raw["edits"]),
+            ),
+        )
 
 
 def load_all(directory: Path | None = None) -> dict[str, Scenario]:

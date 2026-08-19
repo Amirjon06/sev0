@@ -1,0 +1,50 @@
+id: catalog-instability
+title: Checkout 5xx from an unstable dependency
+family: infra
+alert: checkout-5xx
+difficulty: medium
+tags: [dependency, flaky]
+
+summary: |
+  The catalog failure rate is raised to a third of reads. Retries absorb
+  some of it, but the compounded probability across a session still leaves
+  a substantial share of checkouts failing. The fault is in a dependency,
+  not in the service that reports the error.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Raise catalog error injection for the resilience drill
+
+    Turning the dial up ahead of Thursday's game day so the retry budget
+    gets a real exercise rather than a token one.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      CATALOG_ERROR_RATE=0.01
+    replace: |
+      CATALOG_ERROR_RATE=0.35
+
+rebuild: [catalog]
+
+ground_truth:
+  service: catalog
+  file: config/storefront.env
+  symbol: CATALOG_ERROR_RATE
+  summary: |
+    Catalog is deliberately failing a third of reads. Everything
+    downstream is behaving correctly in the face of a dependency that is
+    not.
+
+notes:
+  signal: |
+    catalog 503 rate rises first, then gateway 5xx. catalog logs "catalog
+    backend unavailable" at high volume. Retry warnings rise in step.
+  path: |
+    The failing service and the alerting service are different, and the
+    catalog metrics move first. Following the errors backwards lands on
+    catalog rather than on the gateway that paged.
+  reproduction: |
+    Read catalog's own error rate from its metrics; it matches the
+    configured value.

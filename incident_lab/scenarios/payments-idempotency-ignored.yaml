@@ -1,0 +1,56 @@
+id: payments-idempotency-ignored
+title: Charges authorized more often than orders are priced
+family: code
+alert: payments-duplicate-charges
+difficulty: hard
+tags: [idempotency, silent]
+
+summary: |
+  Replay lookup stops consulting the store of earlier authorisations, so a
+  retried charge is authorised a second time. Under the transient catalog
+  failures the storefront normally absorbs, a slice of orders are charged
+  twice. Nothing errors, and the shopper sees a successful checkout.
+
+commit:
+  author: Marcus Lee <marcus@storefront.example>
+  message: |
+    refactor(payments): Drop the replay cache lookup
+
+    The processor deduplicates on its own key, so holding a second copy of
+    that state here was doing nothing but growing.
+
+edits:
+  - file: services/payments/main.py
+    find: |2
+          if not idempotency_key:
+              return None
+          return _authorised.get(idempotency_key)
+    replace: |2
+          if not idempotency_key:
+              return None
+          return None
+
+rebuild: [payments]
+
+failing_tests:
+  - tests/test_services.py::TestIdempotency::test_a_repeated_key_returns_the_original_authorisation
+
+ground_truth:
+  service: payments
+  file: services/payments/main.py
+  symbol: replay
+  summary: |
+    replay always reports no earlier authorisation, so an idempotency key
+    no longer prevents a retried charge from being taken twice.
+
+notes:
+  signal: |
+    storefront_charges_total{outcome="authorized"} rises above
+    storefront_orders_total. The replayed outcome falls to zero.
+  path: |
+    A charge count above the order count can only mean the same order was
+    charged more than once, which is what the idempotency path exists to
+    prevent.
+  reproduction: |
+    Authorise a charge with a key, then call replay with the same key: it
+    returns None. The replay test fails.

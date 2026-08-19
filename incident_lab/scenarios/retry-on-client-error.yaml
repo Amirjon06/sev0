@@ -1,0 +1,52 @@
+id: retry-on-client-error
+title: Payments load triples after a retry policy change
+family: code
+alert: checkout-latency
+difficulty: medium
+tags: [retry, amplification]
+
+summary: |
+  The retry predicate is widened from server errors to anything that is not
+  a success. Declined cards and rejected amounts are now retried up to
+  three times each, tripling load on payments and pushing checkout latency
+  past its threshold while the eventual answer stays the same.
+
+commit:
+  author: Tom Iversen <tom@storefront.example>
+  message: |
+    fix(gateway): Retry failed upstream calls rather than only 5xx
+
+    A failed call is a failed call. Restricting retries to 5xx meant a
+    transient rejection took the whole checkout down with it.
+
+edits:
+  - file: services/gateway/main.py
+    find: |2
+          return status_code >= 500
+    replace: |2
+          return status_code >= 400
+
+rebuild: [gateway]
+
+failing_tests:
+  - tests/test_services.py::TestRetryPolicy::test_a_declined_card_is_never_retried
+
+ground_truth:
+  service: gateway
+  file: services/gateway/main.py
+  symbol: should_retry
+  summary: |
+    Treating 4xx as retryable means declines and rejections are resent.
+    The answer never changes, so the only effect is three times the load
+    and three times the latency on the failing path.
+
+notes:
+  signal: |
+    gateway p95 latency crosses two seconds. payments request rate rises
+    sharply while the order rate does not. gateway logs a burst of
+    "upstream returned a retryable status" at 4xx statuses.
+  path: |
+    The retry warning naming a 402 is the direct tell: a declined card is
+    not a retryable status.
+  reproduction: |
+    should_retry(402) returns True. The declined-card test fails.

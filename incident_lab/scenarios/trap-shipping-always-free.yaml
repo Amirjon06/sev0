@@ -1,0 +1,60 @@
+id: trap-shipping-always-free
+title: Shipping stops being charged at all
+family: code
+alert: pricing-anomaly
+difficulty: hard
+tags: [adversarial, regression-trap, silent, pricing]
+
+summary: |
+  An early return leaves shipping at zero for every order. The obvious
+  repair is to return the rate for the chosen speed, which fixes the
+  failing case and silently removes the free shipping threshold rule that
+  three other tests depend on. Only a repair that restores both survives
+  verification.
+
+commit:
+  author: Marcus Lee <marcus@storefront.example>
+  message: |
+    feat(cart): Run free delivery across the whole catalog
+
+    Marketing wants free shipping on everything for the launch week. The
+    threshold logic stays in place for when we turn it back on.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          if payable_cents >= FREE_SHIPPING_THRESHOLD_CENTS:
+              return 0
+
+          chosen = speed or DEFAULT_SHIPPING_SPEED
+    replace: |2
+          return 0
+
+          chosen = speed or DEFAULT_SHIPPING_SPEED
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestShipping::test_a_penny_under_the_threshold_is_charged
+  - tests/test_pricing.py::TestShipping::test_each_speed_charges_its_rate
+  - tests/test_pricing.py::TestShipping::test_no_chosen_speed_falls_back_to_standard
+  - tests/test_pricing.py::TestShipping::test_an_unrecognised_speed_falls_back_rather_than_failing
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: shipping_cents
+  summary: |
+    An unconditional return of zero makes every order ship free. The
+    threshold check and the rate lookup are both unreachable, and a repair
+    has to restore both or it trades one broken rule for another.
+
+notes:
+  signal: |
+    Shipping revenue per order falls to zero. Nothing errors.
+  path: |
+    The metric goes to exactly zero rather than drifting, which means an
+    unconditional path rather than a boundary or rounding error.
+  reproduction: |
+    shipping_cents(1000, "standard") returns 0. Four shipping tests fail
+    together, which is itself the warning that a narrow patch will not do.

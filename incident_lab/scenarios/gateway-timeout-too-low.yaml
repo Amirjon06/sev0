@@ -1,0 +1,49 @@
+id: gateway-timeout-too-low
+title: Checkout 5xx after a timeout tightening
+family: config
+alert: checkout-5xx
+difficulty: medium
+tags: [timeout, resource]
+
+summary: |
+  The gateway request timeout is cut to a fifth of a second. Payments alone
+  averages more than that once its jitter and the retry backoff are
+  counted, so a large share of checkouts abort before the downstream call
+  can finish.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Tighten the gateway timeout
+
+    Five seconds is a long time to hold a shopper's browser open. Bringing
+    it in line with the latency budget the SLO actually implies.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      GATEWAY_TIMEOUT_SECONDS=5
+    replace: |
+      GATEWAY_TIMEOUT_SECONDS=0.2
+
+rebuild: [gateway]
+
+ground_truth:
+  service: gateway
+  file: config/storefront.env
+  symbol: GATEWAY_TIMEOUT_SECONDS
+  summary: |
+    The timeout is below the normal downstream response time, so the
+    gateway gives up on calls that would have succeeded.
+
+notes:
+  signal: |
+    gateway 5xx rises. gateway logs read timeouts against cart and
+    payments, while cart and payments themselves report success at their
+    own metrics.
+  path: |
+    Downstream services reporting success for calls the caller reports as
+    failures is the shape of a client-side timeout, not a server fault.
+  reproduction: |
+    Compare payments' own request duration histogram against the
+    configured gateway timeout.

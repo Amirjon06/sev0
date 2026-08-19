@@ -1,0 +1,47 @@
+id: payments-latency-spike
+title: Checkout latency and errors after a processor change
+family: infra
+alert: checkout-latency
+difficulty: medium
+tags: [latency, dependency]
+
+summary: |
+  Payments baseline latency is raised to four seconds, simulating a
+  degraded upstream processor. Checkout latency crosses its threshold and,
+  once the gateway's own timeout is reached, a share of requests fail as
+  well.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Model the processor's new latency profile
+
+    Their status page has been reporting elevated authorisation times all
+    week. Bringing the simulated profile in line so staging matches.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      PAYMENTS_BASE_LATENCY_MS=35
+    replace: |
+      PAYMENTS_BASE_LATENCY_MS=4000
+
+rebuild: [payments]
+
+ground_truth:
+  service: payments
+  file: config/storefront.env
+  symbol: PAYMENTS_BASE_LATENCY_MS
+  summary: |
+    Payments now takes four seconds per charge, which is close to the
+    gateway timeout. Latency rises everywhere and some calls are abandoned.
+
+notes:
+  signal: |
+    payments request duration histogram shifts by two orders of magnitude.
+    gateway p95 follows it. cart latency is unchanged.
+  path: |
+    Only one service's latency moved. That isolates the fault to payments
+    without needing to read any application code.
+  reproduction: |
+    Compare the payments duration histogram before and after onset.

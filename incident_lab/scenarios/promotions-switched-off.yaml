@@ -1,0 +1,48 @@
+id: promotions-switched-off
+title: Discounts stop applying after a flag change
+family: config
+alert: pricing-anomaly
+difficulty: hard
+tags: [feature-flag, silent, pricing]
+
+summary: |
+  The master promotions flag is turned off. Codes are still accepted and
+  still echoed back, so nothing errors and no test in the application
+  suite fails; discounts simply stop being worth anything.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Disable promotions ahead of the pricing migration
+
+    Freezing discount behaviour while the new promotions service is
+    brought up, so the two do not both apply a code.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      PROMOTIONS_ENABLED=true
+    replace: |
+      PROMOTIONS_ENABLED=false
+
+rebuild: [cart]
+
+ground_truth:
+  service: cart
+  file: config/storefront.env
+  symbol: PROMOTIONS_ENABLED
+  summary: |
+    With promotions disabled, discount_cents returns zero for every code.
+    Checkouts succeed at the undiscounted price.
+
+notes:
+  signal: |
+    storefront_order_cents_total{component="discount"} falls to zero while
+    the subtotal component is unchanged. No error rate moves.
+  path: |
+    A discount component of exactly zero across all traffic is a switch,
+    not a bug: a logic error would still discount some orders. cart /stats
+    reports promotions_enabled.
+  reproduction: |
+    The application suite passes, because the flag is read at import time
+    from the environment and the tests run with the default.

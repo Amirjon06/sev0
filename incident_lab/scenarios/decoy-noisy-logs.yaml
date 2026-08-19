@@ -1,0 +1,82 @@
+id: decoy-noisy-logs
+title: Checkout rejections behind a wall of unrelated warnings
+family: code
+alert: checkout-4xx
+difficulty: hard
+tags: [adversarial, decoy-logs]
+
+summary: |
+  Line merging starts aliasing its input, so quantities compound and order
+  totals inflate past the charge ceiling. At the same time a deprecation
+  warning is added to the cart read path, logged at WARNING on every single
+  request. The loudest thing in the logs has nothing to do with the failure.
+
+commits:
+  - author: Tom Iversen <tom@storefront.example>
+    message: |
+      perf(cart): Avoid copying rows while merging lines
+
+      Merging allocated a fresh dict per line for no reason. The rows are
+      already ours by the time they get here.
+    edits:
+      - file: services/cart/main.py
+        find: |2
+                  if existing is None:
+                      merged[product_id] = dict(row)
+                      continue
+        replace: |2
+                  if existing is None:
+                      merged[product_id] = row
+                      continue
+
+  - author: Dana Whitfield <dana@storefront.example>
+    message: |
+      chore(cart): Warn on the legacy cart read path
+
+      Flagging the untyped promo_code query parameter ahead of removing it
+      next quarter, so we can see who is still sending it.
+    edits:
+      - file: services/cart/main.py
+        find: |2
+              with get_pool().connection() as conn:
+                  rows = conn.execute(
+                      "SELECT product_id, quantity, price_cents FROM cart_items WHERE user_id = %s",
+                      (user_id,),
+                  ).fetchall()
+        replace: |2
+              log.warning(
+                  "deprecated cart read path in use; migrate to /v2/carts",
+                  extra={"extra": {"user_id": user_id}},
+              )
+
+              with get_pool().connection() as conn:
+                  rows = conn.execute(
+                      "SELECT product_id, quantity, price_cents FROM cart_items WHERE user_id = %s",
+                      (user_id,),
+                  ).fetchall()
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestLineMerging::test_merging_does_not_mutate_the_rows_it_was_given
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: merge_lines
+  summary: |
+    The merged line aliases the caller's row, so quantities compound across
+    repeated pricing and totals grow past the charge ceiling. The
+    deprecation warning is noise and predates nothing.
+
+notes:
+  signal: |
+    WARNING volume is dominated by the deprecation line, which fires on
+    every request including successful ones. The causal evidence is in
+    payments, at INFO and WARNING, naming implausible amounts.
+  path: |
+    A log line that appears on successful requests cannot explain a failure
+    rate. Filtering to requests that actually failed leaves the amounts.
+  reproduction: |
+    The deprecation warning appears identically before and after a failing
+    request. merge_lines mutates its input.

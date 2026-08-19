@@ -1,0 +1,55 @@
+id: gateway-error-mapping
+title: Checkout 5xx after an error handling simplification
+family: code
+alert: checkout-5xx
+difficulty: medium
+tags: [error-handling]
+
+summary: |
+  The gateway stops translating a rejected amount into a client error and
+  falls through to raise_for_status instead. A request payments correctly
+  refused now surfaces as an internal error, which pages on-call for what is
+  really a rejected input.
+
+commit:
+  author: Tom Iversen <tom@storefront.example>
+  message: |
+    refactor(gateway): Fold amount rejection into the generic path
+
+    raise_for_status already covers every non-success status, so the explicit
+    branch was doing nothing the general path does not.
+
+edits:
+  - file: services/gateway/main.py
+    find: |2
+          if status_code == 400:
+              return HTTPException(status_code=400, detail="payment rejected the amount")
+          return None
+    replace: |2
+          return None
+
+rebuild: [gateway]
+
+failing_tests:
+  - tests/test_services.py::TestChargeErrorMapping::test_a_rejected_amount_is_a_client_error
+
+ground_truth:
+  service: gateway
+  file: services/gateway/main.py
+  symbol: charge_error
+  summary: |
+    The mapping no longer recognises a rejected amount, so it falls through to
+    raise_for_status and is reported as a 500 rather than passed through as
+    the client error it is.
+
+notes:
+  signal: |
+    gateway 5xx rises while payments 4xx stays flat, which is the shape of a
+    mapping bug rather than a failure.
+  path: |
+    payments logs show it rejecting amounts deliberately and returning 400.
+    The gateway reports 500 for the same requests, so the discrepancy belongs
+    to the gateway.
+  reproduction: |
+    Drive a checkout whose total exceeds PAYMENTS_MAX_CHARGE_CENTS and compare
+    the status payments returns with the one the gateway reports.

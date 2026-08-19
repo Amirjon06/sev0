@@ -1,0 +1,48 @@
+id: charge-ceiling-too-low
+title: Checkout rejections after a fraud limit change
+family: config
+alert: checkout-4xx
+difficulty: easy
+tags: [limit, resource]
+
+summary: |
+  The per-charge ceiling is dropped to fifty dollars. Ordinary orders now
+  exceed it, so payments refuses them and the gateway passes the rejection
+  through as a client error. Nothing crashes; a large share of shoppers
+  simply cannot pay.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Lower the per-charge ceiling
+
+    Risk asked for a tighter cap on single transactions after last week's
+    chargeback review.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      PAYMENTS_MAX_CHARGE_CENTS=500000
+    replace: |
+      PAYMENTS_MAX_CHARGE_CENTS=5000
+
+rebuild: [payments]
+
+ground_truth:
+  service: payments
+  file: config/storefront.env
+  symbol: PAYMENTS_MAX_CHARGE_CENTS
+  summary: |
+    The ceiling is below typical order values, so payments rejects normal
+    charges as exceeding the limit.
+
+notes:
+  signal: |
+    gateway 4xx rises. payments logs "charge exceeds the per-transaction
+    ceiling" at amounts that are entirely ordinary.
+  path: |
+    The rejected amounts are plausible order totals, which points at the
+    limit rather than at the amounts.
+  reproduction: |
+    Compare the configured ceiling against the order totals in the cart
+    metrics.

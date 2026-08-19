@@ -1,0 +1,49 @@
+id: cart-pool-starvation
+title: Checkout 5xx under load after a capacity change
+family: config
+alert: checkout-5xx
+difficulty: medium
+tags: [capacity, resource]
+
+summary: |
+  The cart connection pool is shrunk to two. At baseline traffic that is
+  not quite enough, so requests queue for a free connection and a share of
+  them time out waiting. The code is untouched; only the number changed.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Reduce the cart connection pool
+
+    Postgres was carrying more idle backends than the instance size really
+    supports. Trimming the pool to what the service actually uses at rest.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      DB_POOL_MAX_SIZE=10
+    replace: |
+      DB_POOL_MAX_SIZE=2
+
+rebuild: [cart]
+
+ground_truth:
+  service: cart
+  file: config/storefront.env
+  symbol: DB_POOL_MAX_SIZE
+  summary: |
+    Two connections cannot serve baseline concurrency, so requests exhaust
+    DB_POOL_TIMEOUT waiting for one and fail. Nothing in the application
+    code is wrong.
+
+notes:
+  signal: |
+    gateway 5xx rises and cart latency rises with it. cart logs pool
+    timeout errors. cart /stats reports pool_max_size of 2.
+  path: |
+    Latency rising alongside errors points at contention rather than at a
+    logic bug. The pool size is readable from /stats and from the config
+    file, and history shows it changing.
+  reproduction: |
+    The application tests all pass, which is itself the evidence: this is
+    not a code fault. The setting is in the config commit.

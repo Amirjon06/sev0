@@ -1,0 +1,49 @@
+id: retries-disabled
+title: Transient catalog failures stop being absorbed
+family: config
+alert: checkout-5xx
+difficulty: hard
+tags: [retry, resilience]
+
+summary: |
+  Retrying is switched off by setting the attempt count to one. The
+  catalog dependency fails a small share of reads by design, and those
+  failures were previously absorbed. They now reach the shopper, so the
+  error rate rises to roughly the dependency's own failure rate.
+
+commit:
+  author: Sasha Bright <sasha@storefront.example>
+  message: |
+    chore(config): Stop retrying gateway calls
+
+    Retries were adding load during last month's incident without changing
+    the outcome. Disabling them until the backoff is smarter.
+
+edits:
+  - file: config/storefront.env
+    find: |
+      GATEWAY_MAX_ATTEMPTS=3
+    replace: |
+      GATEWAY_MAX_ATTEMPTS=1
+
+rebuild: [gateway]
+
+ground_truth:
+  service: gateway
+  file: config/storefront.env
+  symbol: GATEWAY_MAX_ATTEMPTS
+  summary: |
+    One attempt means no retry. The transient catalog failure rate the
+    system was designed to tolerate now passes straight through.
+
+notes:
+  signal: |
+    gateway 5xx rises to roughly the catalog error rate. The "upstream
+    returned a retryable status" warnings stop appearing, because nothing
+    is retried any more.
+  path: |
+    A warning that stops being logged at the moment an error rate rises is
+    the signal here. catalog's own error rate is unchanged.
+  reproduction: |
+    Compare catalog's 5xx rate against the gateway's before and after
+    onset: they were different, and now they match.

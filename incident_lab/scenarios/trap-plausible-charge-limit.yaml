@@ -1,0 +1,56 @@
+id: trap-plausible-charge-limit
+title: Checkout rejections that look like a fraud limit
+family: code
+alert: checkout-4xx
+difficulty: hard
+tags: [adversarial, plausible-decoy]
+
+summary: |
+  A clamp in line merging is inverted, so quantities are raised to the cap
+  instead of being held under it. Totals balloon and payments refuses them.
+  Every visible symptom fits "the charge ceiling is too low", which is
+  wrong: the ceiling is untouched and reproduces nothing. The amounts are
+  the problem, not the limit.
+
+commit:
+  author: Tom Iversen <tom@storefront.example>
+  message: |
+    fix(cart): Apply the per-line quantity cap
+
+    The cap was documented but never enforced on merged lines, so a
+    shopper could stack additions past it.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          for line in merged.values():
+              line["quantity"] = min(line["quantity"], MAX_LINE_QUANTITY)
+    replace: |2
+          for line in merged.values():
+              line["quantity"] = max(line["quantity"], MAX_LINE_QUANTITY)
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestLineMerging::test_repeat_additions_of_one_product_become_one_line
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: merge_lines
+  summary: |
+    max instead of min raises every merged line to the cap, so a cart of
+    one item is priced as ninety-nine. The charge ceiling is doing exactly
+    its job by refusing the result.
+
+notes:
+  signal: |
+    gateway 4xx rises. payments logs charge rejections at large amounts.
+    The obvious reading is that PAYMENTS_MAX_CHARGE_CENTS is too low.
+  path: |
+    The ceiling has not changed in history, and raising it in an experiment
+    does not restore correct totals, it only lets wrong ones through. The
+    subtotal metric shows order values that no real cart could produce.
+  reproduction: |
+    compute_total on a single item of quantity one returns the price of
+    ninety-nine. The line merging test fails.

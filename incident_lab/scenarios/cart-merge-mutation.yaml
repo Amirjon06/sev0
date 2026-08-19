@@ -1,0 +1,56 @@
+id: cart-merge-mutation
+title: Checkout rejections after a line merging change
+family: code
+alert: checkout-4xx
+difficulty: medium
+tags: [aliasing, pricing]
+
+summary: |
+  Line merging stops copying the row it starts from and accumulates into
+  the caller's dictionary instead. Because the same rows are read again on
+  the next request, quantities compound, order totals inflate, and payments
+  starts refusing charges that exceed its per-transaction ceiling.
+
+commit:
+  author: Tom Iversen <tom@storefront.example>
+  message: |
+    perf(cart): Avoid copying rows while merging lines
+
+    Merging allocated a fresh dict per line for no reason. The rows are
+    already ours by the time they get here.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+              if existing is None:
+                  merged[product_id] = dict(row)
+                  continue
+    replace: |2
+              if existing is None:
+                  merged[product_id] = row
+                  continue
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestLineMerging::test_merging_does_not_mutate_the_rows_it_was_given
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: merge_lines
+  summary: |
+    The merged line aliases the caller's row, so accumulating into it
+    mutates the input. Repeated pricing of the same cart compounds
+    quantities and inflates the total.
+
+notes:
+  signal: |
+    gateway 4xx rate climbs. payments logs "charge exceeds the
+    per-transaction ceiling" with implausibly large amounts.
+  path: |
+    The amounts in the payments logs are the tell: they are far larger than
+    any real cart. That points upstream to pricing rather than to payments.
+  reproduction: |
+    Call merge_lines twice on the same list and observe the input rows
+    changing, or run the mutation test.

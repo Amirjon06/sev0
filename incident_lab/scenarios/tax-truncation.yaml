@@ -1,0 +1,50 @@
+id: tax-truncation
+title: Tax collected drifts below the configured rate
+family: code
+alert: pricing-anomaly
+difficulty: hard
+tags: [rounding, silent, pricing]
+
+summary: |
+  Rounding in the tax calculation is replaced with truncation. Every order
+  under-collects by up to a cent, always in the same direction, and nothing
+  fails. The only trace is tax revenue drifting below what the configured
+  rate predicts.
+
+commit:
+  author: Marcus Lee <marcus@storefront.example>
+  message: |
+    refactor(cart): Simplify the tax calculation
+
+    The magic 5000 was doing rounding by hand. Integer division already
+    gives us a whole number of cents.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          return (taxable_cents * TAX_BASIS_POINTS + 5000) // 10000
+    replace: |2
+          return taxable_cents * TAX_BASIS_POINTS // 10000
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestTax::test_rounding_goes_to_the_nearest_cent
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: tax_cents
+  summary: |
+    Dropping the half-cent addend turns round-half-up into truncation, so
+    every order under-collects tax by up to one cent.
+
+notes:
+  signal: |
+    storefront_order_cents_total{component="tax"} falls relative to the
+    subtotal and shipping components. Nothing errors.
+  path: |
+    Compare the tax component against what TAX_BASIS_POINTS predicts for
+    the subtotal seen over the same window. History names the commit.
+  reproduction: |
+    tax_cents(100) returns 8 rather than 9. The rounding test fails.

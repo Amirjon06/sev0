@@ -1,0 +1,54 @@
+id: shipping-threshold-boundary
+title: Shipping charged on orders that should ship free
+family: code
+alert: pricing-anomaly
+difficulty: hard
+tags: [boundary, silent, pricing]
+
+summary: |
+  The free shipping comparison is tightened from "at or above" to "above",
+  so an order landing exactly on the threshold is charged delivery. Nothing
+  errors and no request fails; the only evidence is that average shipping
+  revenue per order moves outside its usual band.
+
+commit:
+  author: Dana Whitfield <dana@storefront.example>
+  message: |
+    fix(cart): Require an order to exceed the free shipping threshold
+
+    The wording in the promotion is "over $50", and we were giving it away
+    at exactly $50.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          if payable_cents >= FREE_SHIPPING_THRESHOLD_CENTS:
+              return 0
+    replace: |2
+          if payable_cents > FREE_SHIPPING_THRESHOLD_CENTS:
+              return 0
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestShipping::test_exactly_the_threshold_ships_free
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: shipping_cents
+  summary: |
+    The boundary comparison excludes the threshold itself, so orders at
+    exactly the free shipping amount are charged for delivery.
+
+notes:
+  signal: |
+    No error rate moves at all. storefront_orders_total{free_shipping} and
+    storefront_order_cents_total{component="shipping"} shift, which is what
+    the pricing-anomaly rule watches.
+  path: |
+    Because nothing raises, logs are useless here. The metric moves at a
+    specific time and history shows one pricing commit at that time.
+  reproduction: |
+    shipping_cents(FREE_SHIPPING_THRESHOLD_CENTS, "standard") returns 499
+    rather than 0. The threshold test fails.

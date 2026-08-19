@@ -114,10 +114,14 @@ class TestScenarioDiversity:
         assert promo.alert == shipping.alert
         assert promo.ground_truth.symbol != shipping.ground_truth.symbol
 
-    def test_every_scenario_names_a_test_it_should_break(self) -> None:
+    def test_every_code_fault_names_a_test_it_should_break(self) -> None:
         # Without a failing assertion there is nothing for a fix to turn green,
-        # so verification could never confirm anything.
+        # so verification could never confirm anything. Config and infra faults
+        # are exempt by definition: the code is correct in both, which is why
+        # the application suite cannot see them.
         for scenario in model.load_all().values():
+            if scenario.family != "code":
+                continue
             assert scenario.failing_tests, f"{scenario.id} names no failing test"
 
     def test_the_shipping_fault_breaks_the_fallback(self, repo: Path) -> None:
@@ -168,7 +172,10 @@ class TestInjectAndRestore:
         items = [{"price_cents": 12900, "quantity": 1}]
 
         healthy = load_compute_total(repo)
-        assert healthy(items, "NOT-A-CODE")["total_cents"] == 12900
+        # An unrecognised code is worth nothing and costs nothing. Asserting on
+        # the discount rather than the total keeps this test about the promo
+        # path, so a change to tax or shipping does not make it lie.
+        assert healthy(items, "NOT-A-CODE")["discount_cents"] == 0
 
         commit_fault(repo, scenario)
 
@@ -183,8 +190,14 @@ class TestInjectAndRestore:
         compute_total = load_compute_total(repo)
 
         items = [{"price_cents": 12900, "quantity": 1}]
-        assert compute_total(items, "SAVE10")["total_cents"] == 11610
-        assert compute_total(items, None)["total_cents"] == 12900
+
+        discounted = compute_total(items, "SAVE10")
+        assert discounted["discount_cents"] == 1290
+        assert discounted["total_cents"] > 0
+
+        undiscounted = compute_total(items, None)
+        assert undiscounted["discount_cents"] == 0
+        assert undiscounted["subtotal_cents"] == 12900
 
     def test_the_fault_lands_as_a_real_commit(self, repo: Path) -> None:
         scenario = model.load("checkout-promo-none")

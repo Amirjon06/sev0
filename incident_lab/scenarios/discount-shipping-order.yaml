@@ -1,0 +1,54 @@
+id: discount-shipping-order
+title: Free shipping given to orders that no longer qualify
+family: code
+alert: pricing-anomaly
+difficulty: hard
+tags: [ordering, silent, pricing]
+
+summary: |
+  Shipping is judged on the pre-discount subtotal rather than on what the
+  shopper actually pays. Orders discounted below the free shipping
+  threshold keep free delivery, so shipping revenue falls without any
+  request failing.
+
+commit:
+  author: Marcus Lee <marcus@storefront.example>
+  message: |
+    fix(cart): Judge free shipping on the order value
+
+    Shoppers were losing free delivery by applying a code, which reads as a
+    penalty for using a promotion we sent them.
+
+edits:
+  - file: services/cart/main.py
+    find: |2
+          payable = subtotal - discount
+          shipping = shipping_cents(payable, shipping_speed)
+    replace: |2
+          payable = subtotal - discount
+          shipping = shipping_cents(subtotal, shipping_speed)
+
+rebuild: [cart]
+
+failing_tests:
+  - tests/test_pricing.py::TestOrderTotal::test_shipping_is_judged_on_what_is_actually_payable
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: compute_total
+  summary: |
+    shipping_cents is called with the subtotal instead of the payable
+    amount, so a discount that drops an order below the threshold no
+    longer costs the shopper delivery.
+
+notes:
+  signal: |
+    Shipping revenue per order falls, concentrated in orders carrying a
+    promotion code. No error rate moves.
+  path: |
+    The free_shipping label on storefront_orders_total shifts. Correlating
+    the shift with recent pricing commits finds the argument change.
+  reproduction: |
+    compute_total on a 5200 cent order with SAVE10 returns shipping of 0
+    rather than 499. The payable-amount test fails.

@@ -1,0 +1,90 @@
+id: decoy-newest-commit
+title: Checkout 5xx with a large refactor landing after the fault
+family: code
+alert: checkout-5xx
+difficulty: hard
+tags: [adversarial, decoy-commit]
+
+summary: |
+  The fault is a one-line change to the shipping fallback. Immediately
+  afterwards a much larger and much more alarming-looking commit lands on
+  payments, rewriting its logging and touching more lines than the real
+  fault does. The newest commit is the obvious suspect and is harmless.
+
+commits:
+  - author: Priya Raman <priya@storefront.example>
+    message: |
+      refactor(cart): Read the shipping rate directly
+
+      The defaulted lookup implied the table might not contain the speed we
+      were given, which has not been true since validation moved upstream.
+    edits:
+      - file: services/cart/main.py
+        find: |2
+              chosen = speed or DEFAULT_SHIPPING_SPEED
+              return SHIPPING_RATES.get(chosen, SHIPPING_RATES[DEFAULT_SHIPPING_SPEED])
+        replace: |2
+              chosen = speed or DEFAULT_SHIPPING_SPEED
+              return SHIPPING_RATES[chosen]
+
+  - author: Marcus Lee <marcus@storefront.example>
+    message: |
+      refactor(payments)!: Rework charge authorization logging
+
+      BREAKING CHANGE: the charge log line now carries a structured
+      authorization block rather than flat fields. Anything parsing the
+      old shape will need updating.
+
+      Touches every log site in the charge path. Behaviour is unchanged.
+    edits:
+      - file: services/payments/main.py
+        find: |2
+              log.info(
+                  "charge authorized",
+                  extra={
+                      "extra": {
+                          "user_id": payload.user_id,
+                          "amount_cents": payload.amount_cents,
+                          "charge_id": charge_id,
+                      }
+                  },
+              )
+        replace: |2
+              log.info(
+                  "charge authorized",
+                  extra={
+                      "extra": {
+                          "authorization": {
+                              "user_id": payload.user_id,
+                              "amount_cents": payload.amount_cents,
+                              "charge_id": charge_id,
+                          }
+                      }
+                  },
+              )
+
+rebuild: [cart, payments]
+
+failing_tests:
+  - tests/test_pricing.py::TestShipping::test_an_unrecognised_speed_falls_back_rather_than_failing
+
+ground_truth:
+  service: cart
+  file: services/cart/main.py
+  symbol: shipping_cents
+  summary: |
+    The shipping rate is subscripted directly, so an unrecognised speed
+    raises KeyError. The payments logging rewrite that landed afterwards
+    changes no behaviour at all.
+
+notes:
+  signal: |
+    cart logs a KeyError. The payments commit is larger, marked breaking,
+    and lands closer to onset in wall-clock terms.
+  path: |
+    Reading the logs rather than the log order settles it: the traceback
+    names cart. Reading the payments diff shows it only reshapes a log
+    payload.
+  reproduction: |
+    Reverting the payments commit changes nothing. Calling shipping_cents
+    with "Express" raises.

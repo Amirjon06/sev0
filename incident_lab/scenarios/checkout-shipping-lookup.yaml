@@ -2,27 +2,22 @@ id: checkout-shipping-lookup
 title: Checkout 5xx after a shipping rates tidy-up
 family: code
 alert: checkout-5xx
+difficulty: easy
+tags: [crash, pricing]
 
 summary: |
-  A cleanup of the shipping lookup replaces a defaulted get with a direct
-  subscript. Any speed the rates table does not contain now raises KeyError
-  instead of falling back to standard. An older build of the web front end
-  still sends "Express" with a capital E, so roughly one checkout in six
-  fails while every other order goes through untouched.
-
-  Deliberately the same symptom as checkout-promo-none — a partial 5xx rate on
-  checkout — but a different function, a different exception, and a different
-  fix. An agent that pattern-matches on the alert rather than reading the
-  traceback will land in the wrong place.
+  A cleanup of the shipping rate lookup replaces the defaulted dict access
+  with a direct subscript. Any shipping speed the table does not recognise
+  now raises KeyError instead of falling back to standard. An older front
+  end still sends "Express" with a capital E, so a slice of checkouts fail.
 
 commit:
   author: Priya Raman <priya@storefront.example>
   message: |
-    refactor(cart): Tidy up the shipping rate lookup
+    refactor(cart): Read the shipping rate directly
 
-    The defaulted get was hiding the fact that every caller already
-    normalises the speed before it reaches here. Read the rate directly
-    now that the fallback is dead weight.
+    The defaulted lookup implied the table might not contain the speed we
+    were given, which has not been true since validation moved upstream.
 
 edits:
   - file: services/cart/main.py
@@ -33,8 +28,7 @@ edits:
           chosen = speed or DEFAULT_SHIPPING_SPEED
           return SHIPPING_RATES[chosen]
 
-rebuild:
-  - cart
+rebuild: [cart]
 
 failing_tests:
   - tests/test_pricing.py::TestShipping::test_an_unrecognised_speed_falls_back_rather_than_failing
@@ -44,7 +38,16 @@ ground_truth:
   file: services/cart/main.py
   symbol: shipping_cents
   summary: |
-    SHIPPING_RATES has no entry for a speed the front end capitalised
-    differently. The direct subscript raises KeyError where the previous
-    defaulted lookup returned the standard rate, so the checkout fails
-    instead of shipping at the usual price.
+    SHIPPING_RATES is subscripted directly, so a speed outside the table
+    raises KeyError. Real traffic contains differently-cased values.
+
+notes:
+  signal: |
+    gateway 5xx rate rises. cart logs a KeyError naming the speed value,
+    typically 'Express'.
+  path: |
+    Logs name the exception and the file. History shows the lookup changing
+    just before onset.
+  reproduction: |
+    shipping_cents(1000, "Express") raises. The unrecognised-speed test
+    fails.
