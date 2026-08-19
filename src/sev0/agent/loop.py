@@ -47,6 +47,10 @@ well it reads.
 - Once you believe you have the cause, `try_patch` proves it. The failure has to
   reproduce first, then your change is applied and the suite re-run. A patch that
   fixes one test and breaks another is not a fix.
+- A patch that fails verification is worth more than no patch at all. It tells
+  the reviewer what the cause is not, and it is recorded either way. Try the
+  smallest change that would make the observed failure impossible, and let the
+  suite say whether you were right.
 
 How to reason:
 
@@ -61,7 +65,22 @@ How to reason:
   confident wrong answer, because a wrong answer costs the reviewer their time
   and their trust.
 
-Call `conclude` exactly once, when you are done.
+How to finish:
+
+Naming the cause is half the job. The person reading this is on call, and a
+diagnosis they still have to write the fix for has saved them the hard thinking
+and none of the work.
+
+So before you conclude: attempt the fix with `try_patch` and let verification
+judge it. Conclude only after that has run, whether it passed or failed, and say
+in your reasoning what the verification showed.
+
+The one case where concluding without a patch is right is when you cannot
+identify a specific change that would fix it. Then say so plainly. An honest "I
+found the cause but not the fix" is useful. Stopping at the diagnosis because it
+felt like the end is not.
+
+Call `conclude` exactly once, and last.
 """
 
 

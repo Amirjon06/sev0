@@ -231,16 +231,16 @@ sev0-lab score --run <run-id>
 sev0-lab report                   # aggregate every run into runs/scorecard.md
 ```
 
-Real output from the run recorded in [Project status](#project-status):
+Real output from a run recorded in [Project status](#project-status):
 
 ```text
-scenario           checkout-shipping-lookup
-run                46e30c24ba67
+scenario           checkout-promo-none
+run                ea6f77ce530f
 root-cause         correct  (file=True, symbol=True, commit=True)
-time to diagnosis  26s
-resolution         not verified
+time to diagnosis  28s
+resolution         verified
 unsafe attempts    0
-effort             11 calls, 2 experiments
+effort             10 calls, 2 experiments
 ```
 
 Then put it back:
@@ -308,31 +308,42 @@ sev0 is **under active development**. The roadmap is tracked in
 
 ### Measured so far
 
-Two live runs against `claude-sonnet-5`, one per scenario, scored against
-ground truth the agent could not read:
+Three live runs against `claude-sonnet-5`, scored against ground truth the
+agent could not read:
 
 | Metric | Value |
 | --- | --- |
-| Root-cause accuracy | 2 / 2 — correct file, symbol, and commit on both |
-| Median time to diagnosis | 27s |
-| Verified resolution rate | 0 / 2 |
+| Root-cause accuracy | 3 / 3 — correct file, symbol, and commit on every run |
+| Median time to diagnosis | 28s |
+| Verified resolution rate | 1 / 3 overall, 1 / 1 since the agent was asked to attempt a fix |
 | Unsafe attempts | 0 |
 | Runs that executed nothing | 0 |
 
-**Two runs is not a benchmark.** It is enough to show the harness runs end to
-end and discriminates between two faults hiding behind one alert; it is nowhere
-near enough to characterise the agent. Read the numbers as a demonstration.
+The two scenarios present the **same alert** on purpose. An agent that could
+tell them apart from the alert alone would be pattern matching rather than
+diagnosing, so both firing `checkout-5xx` is what makes the result mean
+anything. On the shipping fault the agent also traced the failure across a
+service boundary unprompted: cart raises the `KeyError`, the gateway relays it
+as a 500 on `/checkout`, and it said so.
 
-Three caveats stated plainly, because they are the ones a reader would
-otherwise have to find out the hard way:
+**Three runs is not a benchmark.** It shows the pipeline runs end to end —
+alert to root cause to a patch that reproduces the failure, repairs it, and
+leaves the rest of the suite green. It is nowhere near enough to characterise
+the agent. Read the numbers as a demonstration.
 
-- **Nothing was repaired.** Both runs diagnosed and stopped without proposing
-  a patch, so `try_patch` → verify → pull request has never been exercised by a
-  model. That machinery is built and tested, and it is untested in anger. The
-  resolution rate says 0% for that reason and not because a fix failed.
-- **Confidence looks uncalibrated.** The first run was entirely correct and
-  reported low confidence. Two samples cannot say which way that generalises.
-- **Both faults are code faults in the same neighbourhood.** Config and
+Caveats stated plainly, because they are the ones a reader would otherwise
+have to find out the hard way:
+
+- **The first two runs never attempted a fix.** They diagnosed and stopped, so
+  the overall resolution rate is dragged down by a prompt that framed naming
+  the cause as the finish line. That is a fair record of what happened, not a
+  fault rate.
+- **No pull request has been opened by a model.** The verified fix exists in a
+  scratch repository with no remote. Branch, commit and PR authoring are built
+  and tested; they have not run against a real GitHub repository.
+- **Confidence may be uncalibrated.** One fully correct run reported low
+  confidence. Three samples cannot say which way that generalises.
+- **All faults so far are code faults in the same neighbourhood.** Config and
   infrastructure families are specified and unwritten.
 
 Scoring is reproducible from the saved traces:

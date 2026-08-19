@@ -15,6 +15,27 @@ Format:
 
 ---
 
+## 2026-08-19 — The repair half, proven
+
+**Tried:** Both live runs had diagnosed and stopped. The prompt described
+try_patch as available, then framed conclude as the end of the work, so naming
+the cause read as the finish line. Rewrote the ending: say what the deliverable
+actually is, require a patch attempt before concluding, and require the
+verification result in the reasoning either way.
+**Result:** Correct root cause, high confidence, and a *verified* fix — the
+failure reproduced, the patch applied, the suite came back green. Same 28s, same
+10 tool calls. The fix cost nothing extra; the agent had simply never been asked.
+**Decided:** keep the honest exit. "I found the cause but not the fix" stays a
+valid answer, because forcing a patch out of an agent that has not found one
+produces a plausible diff over a real bug, which is the worst possible output.
+**Noted:** this was a prompt problem, not a capability problem, and the
+scorecard is what made it visible. Resolution rate sat at 0% next to 100%
+accuracy, and two numbers that disagree are a question. One blended score would
+have read as "pretty good" and buried it.
+**Still missing:** no model has opened a pull request. The verified fix lives in
+a scratch repo with no remote, so branch, commit and PR authoring remain tested
+against fixtures and unexercised against GitHub.
+
 ## 2026-08-19 — First live runs, and the benchmark catching itself
 
 **Tried:** Ran the agent against a live model for the first time, once per
