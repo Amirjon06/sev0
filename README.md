@@ -1,376 +1,346 @@
-<div align="center">
-
 # sev0
 
-**An autonomous AI software engineer that diagnoses broken applications, repairs them, and proves the fix.**
+An autonomous software engineer that investigates production incidents, reproduces the failure, repairs it, and proves the repair before asking a human to review it.
 
 [![CI](https://github.com/Amirjon06/sev0/actions/workflows/ci.yml/badge.svg)](https://github.com/Amirjon06/sev0/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/codecov/c/github/Amirjon06/sev0?logo=codecov)](https://codecov.io/gh/Amirjon06/sev0)
-[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196?logo=conventionalcommits&logoColor=white)](https://www.conventionalcommits.org)
 
-</div>
+## What This Is
 
----
+`sev0` takes an incident identifier and works out what broke, without being told.
 
-## Table of Contents
+It reads the same things an on-call engineer would:
 
-- [What sev0 does](#what-sev0-does)
-- [Why it exists](#why-it-exists)
-- [How it works](#how-it-works)
-- [Incident Lab](#incident-lab)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Safety model](#safety-model)
-- [Project status](#project-status)
-- [Contributing](#contributing)
-- [License](#license)
+- metrics, to find when the error rate left its baseline
+- logs from the failing service around that window
+- Git history for commits landing just before it
+- the source of the functions those commits touched
 
----
+Then it does the part that most tools skip: it runs code. It calls the suspect
+function with the suspect input inside a sandbox, runs the target's test suite,
+and finds out whether the failure actually reproduces. A hypothesis that does not
+reproduce is recorded as rejected and the investigation moves on.
 
-## What sev0 does
+When it has a cause, it writes a patch and submits it to verification. The
+failure has to reproduce first, then the patch is applied to a throwaway copy and
+the suite is re-run. A patch that fixes the failing test but breaks another is
+reported as not verified and goes no further. A patch that survives becomes a
+draft pull request carrying the root cause, the rejected hypotheses, the
+verification output, and the diff.
 
-**sev0 is an agent that takes the pager.** Point it at a production incident and
-it investigates on its own — reading logs, metrics, Git history and source
-code, and running experiments against the code — until it can name a **root
-cause**, not just a symptom.
+sev0 opens pull requests. It does not merge them.
 
-It then writes a patch, reproduces the failure in an **isolated sandbox**, runs
-the test suite to confirm the fix holds and nothing else breaks, and opens a
-**pull request** documenting every step of its reasoning.
+## Why It Is Not An LLM Wrapper
 
-A human never stops being the approver. What changes is the shape of the work:
-from *two hours of 3am debugging* to *five minutes reviewing a written argument
-with a diff and a passing test run attached*.
+Two things make the difference.
 
-**Who it is for:** platform and SRE teams carrying an on-call rotation, and
-engineers researching autonomous debugging agents who need a reproducible
-harness rather than a demo video.
+**Hypotheses are executed, not asserted.** The agent has `run_snippet`,
+`run_tests`, and `try_patch`. Every run records how many tool calls actually
+executed code, and the scorecard reports runs that concluded without executing
+anything as their own number, because a confident answer reached purely by
+reading is the failure mode worth catching.
 
-### Core capabilities
+**Verification is deterministic and sits outside the model.** Whether a patch
+counts as a fix is decided by reproducing the failure and re-running the suite,
+not by the model saying so. There is no flag to skip it.
 
-| Capability | What it means |
-| --- | --- |
-| **Evidence collection** | Queries Loki and Prometheus for the logs and metrics around the incident window |
-| **History correlation** | Correlates the failure onset against recent commits, deploys, and config changes |
-| **Code retrieval** | AST-aware search over the target repository to pull the functions actually implicated |
-| **Hypothesis testing** | Runs code in a sandbox to test each candidate cause, rather than reasoning about what it would do |
-| **Patch generation** | Produces a minimal diff bounded by explicit file and line limits |
-| **Verification** | Reproduces the original failure, applies the patch, and re-runs the suite to prove recovery |
-| **Pull request authoring** | Opens a PR with the evidence trail, the rejected hypotheses, and the confidence level |
-| **Scored evaluation** | Ships with [Incident Lab](#incident-lab), a benchmark that grades the agent against known ground truth |
+## How It Works
 
----
-
-## Why it exists
-
-The market is full of tools that claim to resolve incidents autonomously. Almost
-none of them publish **falsifiable evidence** that they work, because measuring
-this properly is harder than building the agent.
-
-sev0 treats that inversion seriously. The agent is the deliverable, but
-**Incident Lab is the argument** — a fault-injection harness that breaks a real
-microservice application in ways the agent is not told about, then scores the
-outcome against ground truth the harness already knows.
-
-Every claim in this README is meant to be reproducible on your own machine with
-one command. Where a number is not yet measured, the roadmap says so.
-
----
-
-## How it works
-
-```mermaid
-flowchart LR
-    A[Alert or incident ID] --> B[Evidence Collectors]
-    B -->|logs, metrics| C[Investigation Loop]
-    B -->|commits, blame, deploys| C
-    D[Code Retrieval] --> C
-    C -->|hypothesis| E[Sandbox]
-    E -->|reproduced?| C
-    C -->|root cause| F[Patch Generator]
-    F --> E
-    E -->|tests green| G[Pull Request]
-    C -.reasoning trace.-> H[(Run Store)]
-    G --> I[Human review]
+```
+incident → collect evidence → inspect history and code → form hypothesis
+         → test by execution → root cause → bounded patch
+         → reproduce and verify → draft pull request
 ```
 
-The investigation loop is deliberately **iterative, not linear**. sev0 forms a
-hypothesis, tries to reproduce it in the sandbox, and feeds the result back in.
-A hypothesis that fails to reproduce is recorded as **rejected** and appears in
-the final pull request — the negative results are part of the evidence.
+The loop is iterative. A rejected hypothesis feeds back into the next round.
 
-A complete run, alert to draft pull request, is
-[sev0-target#1](https://github.com/Amirjon06/sev0-target/pull/1). The measured
-results behind it are in [Project status](#project-status).
+The agent works through 16 tools:
 
----
+- **Observability** — `metrics_overview`, `find_onset`, `failure_logs`, `service_logs`, backed by Prometheus and Loki
+- **History** — `recent_commits`, `commits_touching`, `show_commit`, `blame`, read-only by construction
+- **Code** — `search_code`, `file_outline`, `read_symbol`, using the stdlib `ast`
+- **Experiments** — `run_tests`, `run_snippet`, `try_patch`, all sandboxed
+- **Reasoning** — `record_hypothesis`, `conclude`
+
+Two details that matter more than they look:
+
+- `find_onset` requires a threshold breach to persist across several samples
+  before it reports a start time. A single spike is a restart or one unlucky
+  request. Log lines are deduplicated by shape before the model sees them, since
+  a minute of traffic is thousands of near-identical lines.
+- Code retrieval returns whole definitions, decorators included. A fixed window
+  of lines can cut a function in half, and half a function is worse than none —
+  the model sees a branch without the guard above it and explains a bug that is
+  not there.
+
+Every run writes a complete record to `runs/<run-id>/run.json`: every tool call,
+every hypothesis, every rejection, and the verification result.
+
+## The Target Repository
+
+sev0 never investigates itself. It operates on a separate **target repository**,
+set by `SEV0_TARGET_REPO` and defaulting to `./runs/target`, which Incident Lab
+creates. Pull requests go to the GitHub repository named by `SEV0_REPO`, which
+should be that target's remote.
+
+Keeping them apart is what lets the lab plant faults in a real Git history
+without touching the tool doing the investigating.
 
 ## Incident Lab
 
-**Incident Lab** is the evaluation harness that makes the agent's performance a
-number instead of an anecdote. It runs a containerized microservice application,
-injects a hidden fault, and hands sev0 nothing but an alert.
+Incident Lab is what makes the results checkable instead of anecdotal.
 
-Faults come in three families:
+It runs a containerised storefront — gateway, catalog, cart, payments, Postgres —
+with a load generator and a Loki/Prometheus/Grafana stack. It injects a hidden
+fault and hands sev0 nothing but an alert name.
 
-- **Code faults** — a bad commit is planted in history (off-by-one, unhandled
-  null, wrong comparison operator, swapped arguments)
-- **Config faults** — a timeout, connection pool size, or feature flag is set to
-  a value that only fails under load
-- **Infrastructure faults** — latency injection, packet loss, or resource
-  starvation applied to one service
+Each scenario is a YAML file in `incident_lab/scenarios/`. The fault is described
+as exact find-and-replace anchors rather than a diff, because line numbers rot
+silently as source moves while an anchor that no longer matches fails loudly.
+Injecting commits the change under a plausible author and message, so the history
+is a haystack rather than one obviously suspicious commit on top of scaffolding.
 
-Each scenario carries **ground truth**: the exact commit, file, and line
-responsible. The harness scores four metrics:
+Ground truth — service, file, symbol — lives in the same file, behind
+`sev0-lab reveal`. Nothing an investigation can read ever calls it.
 
-| Metric | Definition |
-| --- | --- |
-| **Root-cause accuracy** | Did the agent name the correct file and commit? |
-| **Time to diagnosis** | Wall-clock seconds from alert to stated root cause |
-| **Resolution rate** | Did the patch make the failing test pass without breaking others? |
-| **Unsafe changes** | Count of edits touching protected paths or exceeding diff limits |
+Runs are scored on four things, kept separate on purpose:
 
-Ground truth lives in the scenario file behind `sev0-lab reveal`, which
-nothing an investigation can read ever calls. Score a run against it:
+- **root-cause accuracy** — correct file *and* symbol; the commit is reported but not required
+- **time to diagnosis** — wall-clock seconds from run start to stated root cause
+- **resolution** — did the patch survive verification
+- **unsafe attempts** — edits touching protected paths or exceeding diff limits
 
-```bash
-sev0-lab score --run <run-id>
-sev0-lab report
-```
+An agent can name the right function and still ship a change that breaks
+something else. One combined number would hide exactly that.
 
----
+Both scenarios currently implemented fire the *same* alert with different causes,
+so the benchmark measures diagnosis rather than pattern matching against the
+symptom. There is a test asserting they stay indistinguishable from outside.
 
-## Prerequisites
+## Safety
 
-| Requirement | Version | Notes |
-| --- | --- | --- |
-| **Python** | 3.11 or 3.12 | 3.13 is untested |
-| **Docker** | 24.0+ | Required for the sandbox and Incident Lab |
-| **Git** | 2.40+ | Required for history analysis |
-| **Anthropic API key** | — | Get one at [console.anthropic.com](https://console.anthropic.com) |
-| **GitHub token** | — | Fine-grained, with `Contents: read/write` and `Pull requests: read/write` |
-| **RAM** | 8 GB free | Incident Lab runs six containers |
+The limits are enforced outside the model and cannot be reached from inside a run.
 
-**Operating systems:** macOS 13+, Ubuntu 22.04+, and Windows 11 via WSL2.
+- Generated code runs in a container with `--network=none`, `--cap-drop=ALL`,
+  `--security-opt=no-new-privileges`, memory and PID caps, and a hard timeout.
+  `--local-sandbox` bypasses all of that for machines without Docker and is not a
+  security boundary.
+- Experiments and verification work on a throwaway copy. The repository under
+  investigation is never modified by a run.
+- Patch limits (file count, changed lines, protected paths) are checked before
+  anything executes and again inside `apply()` — between a check and a write the
+  tree can move.
+- sev0 will not commit to the base branch, work on a dirty tree, push a branch
+  outside the `sev0/` namespace, or merge anything. A failed commit deletes its
+  own branch.
 
----
+## Requirements
 
-## Installation
+- Linux or macOS
+- Python 3.11 or 3.12
+- Docker 24.0+
+- Git 2.40+
+- 8 GB free RAM — Incident Lab runs ten containers
+- An Anthropic API key
+
+A GitHub token is needed only if you want pull requests opened.
+
+## Setup
 
 ```bash
 git clone https://github.com/Amirjon06/sev0.git
 cd sev0
 
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate
 
 pip install -e ".[dev]"
-cp .env.example .env               # then add your API keys
+cp .env.example .env
 ```
 
-Confirm the install:
+Put your key in `.env`:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Then check it:
 
 ```bash
 sev0 doctor
 ```
 
-`sev0 doctor` prints every resolved setting and flags anything missing. If it
-renders a table, you are ready.
-
----
+That prints every resolved setting and flags a missing API key. If it renders a
+table, you are ready.
 
 ## Quick Start
 
-### 1. Start Incident Lab and break something
+Start the lab and break something:
 
 ```bash
-sev0-lab up                                     # storefront + observability stack
-sev0-lab list                                   # what can be broken
-sev0-lab inject --scenario checkout-promo-none  # plants a hidden fault
+sev0-lab up
+sev0-lab list
+sev0-lab inject --scenario checkout-promo-none
 ```
 
-The storefront is now failing about one checkout in seven. sev0 has not been
-told what changed, and neither have you — `sev0-lab reveal` holds the answer key
-and nothing an investigation reads can reach it.
+Roughly one checkout in seven now fails. Give the error rate a couple of minutes
+to establish — you can watch it at http://localhost:3000.
 
-Watch it happen at [localhost:3000](http://localhost:3000).
-
-### 2. Turn the agent loose
+Investigate:
 
 ```bash
 sev0 investigate --incident checkout-5xx
 ```
 
-The agent gathers evidence, forms hypotheses, and **tests them by running
-code** — calling the suspect function with the suspect input in a sandbox rather
-than reasoning about what it would do. A hypothesis that fails to reproduce is
-recorded as rejected and appears in the final report.
-
-Every run writes a complete trace to `runs/<run-id>/run.json`: every tool call,
-every hypothesis, every rejection.
-
-### 3. Propose a fix, with proof
-
-```bash
-sev0 investigate --incident checkout-5xx --no-dry-run
-```
-
-A fix only becomes a pull request if it survives verification: the failure has
-to reproduce first, then the patch is applied to a throwaway copy and the suite
-re-run. A patch that repairs the failing test and breaks another is reported as
-**not verified** and no pull request is opened.
-
-### 4. Score it against ground truth
-
-```bash
-sev0-lab score --run <run-id>
-sev0-lab report                   # aggregate every run into runs/scorecard.md
-```
-
-Real output from a run recorded in [Project status](#project-status):
-
-```text
-scenario           checkout-promo-none
-run                ea6f77ce530f
-root-cause         correct  (file=True, symbol=True, commit=True)
-time to diagnosis  28s
-resolution         verified
-unsafe attempts    0
-effort             10 calls, 2 experiments
-```
-
-Then put it back:
-
-```bash
-sev0-lab restore
-```
-
----
-
-## Configuration
-
-All configuration is read from environment variables or a local `.env` file.
-Copy `.env.example` and edit. **Never commit `.env`.**
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ANTHROPIC_API_KEY` | — | **Required.** Model provider credential |
-| `SEV0_MODEL` | `claude-sonnet-5` | Model backing the investigation loop |
-| `GITHUB_TOKEN` | — | Required only for pull request creation |
-| `SEV0_REPO` | — | Target repository as `owner/name` |
-| `SEV0_LOKI_URL` | `http://localhost:3100` | Log source |
-| `SEV0_PROMETHEUS_URL` | `http://localhost:9090` | Metrics source |
-| `SEV0_TEMPO_URL` | `http://localhost:3200` | Trace source |
-| `SEV0_SANDBOX_NETWORK` | `none` | Network mode for reproduction containers |
-| `SEV0_MAX_FILES_CHANGED` | `5` | Hard cap on patch breadth |
-| `SEV0_MAX_LINES_CHANGED` | `120` | Hard cap on patch size |
-| `SEV0_MAX_TOOL_CALLS` | `60` | Budget per investigation |
-| `SEV0_REQUIRE_HUMAN_APPROVAL` | `true` | Blocks merging without a human |
-| `SEV0_PROTECTED_PATHS` | `migrations/,infra/,.github/` | Paths the agent may never edit |
-| `SEV0_RUN_DIR` | `./runs` | Where reasoning traces are written |
-
----
-
-## Safety model
-
-An agent that edits code and opens pull requests needs limits that are **not
-negotiable by the model**. sev0 enforces them outside the loop:
-
-- **Sandboxed execution.** All generated code runs in a container with no network
-  access by default and a hard wall-clock timeout.
-- **Bounded diffs.** Patches exceeding the file or line caps are rejected before
-  a pull request is ever created.
-- **Protected paths.** Migrations, infrastructure, and CI configuration are
-  read-only to the agent.
-- **Human in the loop.** sev0 opens pull requests. It does not merge them, and it
-  never pushes to a default branch.
-- **Full auditability.** Every run writes its complete tool-call trace,
-  hypotheses, and rejections to `runs/<run-id>/`.
-
----
-
-## Project status
-
-sev0 is **under active development**. The roadmap is tracked in
-[docs/ROADMAP.md](docs/ROADMAP.md), and the reasoning behind each decision in
-[docs/JOURNAL.md](docs/JOURNAL.md).
-
-| Phase | Scope | Status |
-| --- | --- | --- |
-| **1** | Incident Lab: storefront, observability, fault injection | Done — 2 scenarios, tracing deferred |
-| **2** | Evidence collectors, code retrieval, investigation loop | Done |
-| **3** | Sandbox, verification, patch limits, pull requests | Done |
-| **4** | Benchmark suite and published results | Harness done, **2 runs measured** |
-
-### Measured so far
-
-Four live runs against `claude-sonnet-5`, scored against ground truth the
-agent could not read:
-
-| Metric | Value |
-| --- | --- |
-| Root-cause accuracy | 4 / 4 — correct file, symbol, and commit on every run |
-| Median time to diagnosis | 28s |
-| Verified resolution rate | 2 / 4 overall, 2 / 2 since the agent was asked to attempt a fix |
-| Unsafe attempts | 0 |
-| Runs that executed nothing | 0 |
-
-The last run went the whole way on its own — alert, root cause, patch,
-verification, branch, and a draft pull request:
-**[sev0-target#1](https://github.com/Amirjon06/sev0-target/pull/1)**. Nobody
-touched it between the alert and the review request.
-
-The two scenarios present the **same alert** on purpose. An agent that could
-tell them apart from the alert alone would be pattern matching rather than
-diagnosing, so both firing `checkout-5xx` is what makes the result mean
-anything. On the shipping fault the agent also traced the failure across a
-service boundary unprompted: cart raises the `KeyError`, the gateway relays it
-as a 500 on `/checkout`, and it said so.
-
-**Three runs is not a benchmark.** It shows the pipeline runs end to end —
-alert to root cause to a patch that reproduces the failure, repairs it, and
-leaves the rest of the suite green. It is nowhere near enough to characterise
-the agent. Read the numbers as a demonstration.
-
-Caveats stated plainly, because they are the ones a reader would otherwise
-have to find out the hard way:
-
-- **The first two runs never attempted a fix.** They diagnosed and stopped, so
-  the overall resolution rate is dragged down by a prompt that framed naming
-  the cause as the finish line. That is a fair record of what happened, not a
-  fault rate.
-- **The pull request targets a scratch repository.** `sev0-target` holds the
-  storefront under investigation, seeded by `sev0-lab publish`. The mechanism
-  is the same one that would point at a real service; the stakes are not.
-- **Confidence may be uncalibrated.** One fully correct run reported low
-  confidence. Three samples cannot say which way that generalises.
-- **All faults so far are code faults in the same neighbourhood.** Config and
-  infrastructure families are specified and unwritten.
-
-Scoring is reproducible from the saved traces:
+This diagnoses, patches, and verifies, but opens no pull request. It prints a run
+id. Score that run against the answer key it never had access to:
 
 ```bash
 sev0-lab score --run <run-id>
 sev0-lab report
 ```
 
----
+Put the storefront back:
+
+```bash
+sev0-lab restore
+sev0-lab down
+```
+
+## Opening A Pull Request
+
+The target repository is scratch and has no remote, so publish it once:
+
+```bash
+sev0-lab publish
+```
+
+That force-pushes the target, including the injected fault, to `SEV0_REPO`. It
+needs `GITHUB_TOKEN` set to a token with `Contents: read/write` and
+`Pull requests: read/write` on that repository.
+
+Then run without the dry run:
+
+```bash
+sev0 investigate --incident checkout-5xx --no-dry-run
+```
+
+If the fix verifies, sev0 branches, commits, pushes, and opens a draft pull
+request. If it does not verify, nothing is proposed.
+
+## Everyday Commands
+
+```bash
+sev0 doctor
+sev0 investigate --incident <id> [--alert TEXT] [--no-dry-run] [--local-sandbox]
+
+sev0-lab up [--fresh]
+sev0-lab down [--volumes]
+sev0-lab list
+sev0-lab status
+sev0-lab inject --scenario <id>
+sev0-lab restore
+sev0-lab publish [--repo owner/name]
+sev0-lab score --run <run-id> [--scenario <id>]
+sev0-lab report [--scenario <id>] [--output PATH]
+sev0-lab reveal --scenario <id>
+```
+
+What the less obvious ones do:
+
+- `up --fresh` discards and recreates the target repository before starting
+- `status` shows what is injected, whether the tree is at baseline, and which containers are running
+- `publish` mirrors the local target repository to GitHub so a fix branch has somewhere to go
+- `report` aggregates every scored run into `runs/scorecard.md`
+- `reveal` prints the answer key. Never call it from anything the agent can read
+
+## Configuration
+
+Everything is read from environment variables or a local `.env` file. The full
+set is in `.env.example`; the fields are defined in `src/sev0/config.py`.
+
+The ones you are most likely to change:
+
+- `SEV0_MODEL` — model backing the investigation loop, default `claude-sonnet-5`
+- `SEV0_TARGET_REPO` — repository under investigation, default `./runs/target`
+- `SEV0_REPO` — pull request destination, as `owner/name`
+- `SEV0_MAX_FILES_CHANGED` / `SEV0_MAX_LINES_CHANGED` — hard caps on patch size
+- `SEV0_MAX_TOOL_CALLS` — budget per investigation, default 60
+- `SEV0_PROTECTED_PATHS` — paths the agent may never edit
+
+Never commit `.env`.
+
+## Project Status
+
+All four planned phases have working, tested code: 188 tests, ruff clean, mypy
+strict. The full pipeline has run end to end against a live model — alert to root
+cause to verified patch to draft pull request.
+
+It is not a benchmark yet, and the README will not pretend otherwise. Only two
+scenarios exist, both code faults in the same service, and only a handful of runs
+have been scored. That is enough to show the harness discriminates between two
+causes hiding behind one alert. It is nowhere near enough to characterise the
+agent, so no aggregate accuracy figure is claimed here.
+
+Known gaps:
+
+- **Scenario coverage.** The config and infrastructure fault families in the
+  roadmap are specified and unwritten. So is any fault that produces a wrong
+  answer without an error rate — an off-by-one on a pricing threshold is a wrong
+  total, not a crash, and nothing in the current telemetry would surface it.
+- **No distributed tracing.** There is no Tempo collector and no OpenTelemetry
+  instrumentation. A `tempo_url` setting exists in config and nothing reads it.
+  This is unrelated to the per-run execution records under `runs/`, which are
+  fully implemented and are a different thing with a confusingly similar name.
+- **Confidence is unvalidated.** The agent reports a confidence level with every
+  conclusion. Whether it correlates with being right has not been measured.
+
+Detailed future work is in [docs/ROADMAP.md](docs/ROADMAP.md). The reasoning
+behind each design decision, including the ones that turned out to be wrong, is
+in [docs/JOURNAL.md](docs/JOURNAL.md).
+
+## Troubleshooting
+
+### `sev0 doctor` says the API key is missing
+
+The key goes in `.env`, not in the shell. `.env` is read at startup and
+`ANTHROPIC_API_KEY` is loaded into the process environment from there.
+
+### A fault is already injected
+
+`inject` refuses to stack faults. Run `sev0-lab restore` first.
+
+### Docker is unavailable
+
+Experiments need a sandbox. `sev0 investigate --local-sandbox` will run them
+directly on your machine instead, which is fine for development and is not
+isolation — read anything the model produced before trusting it.
+
+### The run says no verified fix
+
+That is the intended outcome when a patch could not be proved. Check
+`runs/<run-id>/run.json` for what was attempted and what verification reported.
+
+### Scoring picks the wrong scenario
+
+Runs are matched to whichever fault was live when the run started, using the
+injection ledger at `runs/injections.jsonl`. Runs predating that ledger need
+`--scenario` passed explicitly.
+
+## Notes
+
+- The load generator sends a differently-capitalised shipping speed some of the
+  time, because an older front end would. A code path no real request exercises
+  produces no symptom when it breaks.
+- Payments declines 2% of charges and jitters latency on purpose. A flat baseline
+  would make any injected fault trivially detectable and would flatter the agent.
+- Faults are deliberately partial. A total outage would be trivial to find.
 
 ## Contributing
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the branch
-naming, the Conventional Commits format, and what a reviewable pull request looks
-like.
-
-Open an issue before starting significant work so the approach can be discussed
-first.
-
----
+[CONTRIBUTING.md](CONTRIBUTING.md) covers branch naming, the Conventional Commits
+format, and what a reviewable pull request looks like. Open an issue before
+starting significant work.
 
 ## License
 
-Distributed under the MIT License. See [LICENSE](LICENSE) for the full text.
+MIT. See [LICENSE](LICENSE).
