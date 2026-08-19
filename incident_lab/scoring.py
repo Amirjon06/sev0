@@ -15,7 +15,7 @@ you something about how much it should be trusted.
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import PurePosixPath
 
@@ -68,6 +68,16 @@ class Score:
     tool_calls: int
     note: str = ""
 
+    # Provenance. A score that cannot say which model and which mode produced
+    # it cannot be compared with another one, which is the whole point of
+    # running the benchmark in more than one configuration.
+    model: str = ""
+    mode: str = "full"
+    trial: int = 1
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float | None = None
+
     @property
     def correct(self) -> bool:
         """Root-cause accuracy: the right symbol in the right file.
@@ -94,6 +104,29 @@ class Score:
         return "\n".join(rows)
 
 
+@dataclass(frozen=True)
+class Provenance:
+    """Everything needed to attribute a score to the run that produced it."""
+
+    model: str
+    mode: str
+    trial: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float | None
+
+    @classmethod
+    def of(cls, state: RunState) -> Provenance:
+        return cls(
+            model=state.model,
+            mode=state.mode,
+            trial=state.trial,
+            input_tokens=state.usage.input_tokens,
+            output_tokens=state.usage.output_tokens,
+            cost_usd=state.usage.cost_usd,
+        )
+
+
 def score_run(state: RunState, scenario: Scenario) -> Score:
     truth = scenario.ground_truth
     root = state.root_cause
@@ -118,6 +151,7 @@ def score_run(state: RunState, scenario: Scenario) -> Score:
             experiments=state.experiments,
             tool_calls=state.call_count,
             note=state.stopped_because or "no root cause",
+            **asdict(Provenance.of(state)),
         )
 
     fix = state.proposed_fix
@@ -132,6 +166,7 @@ def score_run(state: RunState, scenario: Scenario) -> Score:
         unsafe_attempts=unsafe,
         experiments=state.experiments,
         tool_calls=state.call_count,
+        **asdict(Provenance.of(state)),
     )
 
 

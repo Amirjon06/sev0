@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from incident_lab import benchmark as bench
 from incident_lab import target as target_repo
 from incident_lab.scenarios import model
 from incident_lab.scoring import Score, Scorecard, score_run
@@ -26,6 +29,7 @@ TARGET_DIR = RUN_DIR / "target"
 STATE_FILE = RUN_DIR / "lab-state.json"
 LEDGER_FILE = RUN_DIR / "injections.jsonl"
 DEFAULT_SCORECARD = RUN_DIR / "scorecard.md"
+BENCHMARK_DIR = RUN_DIR / "benchmarks"
 
 app = typer.Typer(
     name="sev0-lab",
@@ -104,6 +108,28 @@ def scenario_live_at(moment: str, ledger: list[dict[str, object]]) -> str | None
         scenario = entry.get("scenario")
         live = str(scenario) if scenario else None
     return live
+
+
+def commit_change(repo: Path, change: model.Change) -> None:
+    """Commit the working tree as the change's author.
+
+    Authorship is per-commit rather than global so that `git blame` and
+    `git log --author` behave the way they would on a real project, which is
+    part of what makes history a usable source of evidence at all.
+    """
+    name, _, email = change.author.partition(" <")
+    target_repo.git(repo, "add", "-A")
+    target_repo.git(
+        repo,
+        "-c",
+        f"user.name={name.strip()}",
+        "-c",
+        f"user.email={email.rstrip('>').strip()}",
+        "commit",
+        "-q",
+        "-m",
+        change.message,
+    )
 
 
 def ensure_target() -> Path:
@@ -210,26 +236,21 @@ def inject(
         console.print("[red]Target repository has uncommitted changes.[/red]")
         raise typer.Exit(code=1)
 
-    for edit in scenario.edits:
-        edit.apply(repo)
-
-    target_repo.git(repo, "add", "-A")
-    target_repo.git(
-        repo,
-        "-c",
-        f"user.name={scenario.author.split(' <')[0]}",
-        "-c",
-        f"user.email={scenario.author.split(' <')[1].rstrip('>')}",
-        "commit",
-        "-q",
-        "-m",
-        scenario.commit_message,
-    )
+    # Each change lands as its own commit, in order. A scenario with a decoy
+    # needs the decoy to sit on top of the real fault in the log, which is only
+    # true if they are separate commits.
+    faulting_sha = ""
+    for index, change in enumerate(scenario.changes):
+        for edit in change.edits:
+            edit.apply(repo)
+        commit_change(repo, change)
+        if index == 0:
+            faulting_sha = target_repo.head(repo).sha
 
     head = target_repo.head(repo)
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    write_state({"scenario": scenario.id, "commit": head.sha, "injected_at": now})
-    append_ledger({"at": now, "scenario": scenario.id, "commit": head.sha})
+    write_state({"scenario": scenario.id, "commit": faulting_sha, "injected_at": now})
+    append_ledger({"at": now, "scenario": scenario.id, "commit": faulting_sha})
 
     if rebuild and scenario.rebuild:
         console.print(f"Rebuilding {', '.join(scenario.rebuild)} ...")
@@ -342,6 +363,190 @@ def _scenario_for(state: RunState, scenarios: dict[str, model.Scenario]) -> str 
     if state.incident in scenarios:
         return state.incident
     return None
+
+
+@app.command()
+def benchmark(
+    scenario_ids: str = typer.Option(
+        "", "--scenario", "-s", help="Comma-separated scenario ids. Default: all."
+    ),
+    family: str = typer.Option("", "--family", help="Restrict to one fault family."),
+    modes: str = typer.Option("full", "--mode", help="Comma-separated evaluation modes."),
+    runs: int = typer.Option(1, "--runs", "-n", min=1, help="Trials per scenario per mode."),
+    settle: int = typer.Option(
+        bench.SETTLE_SECONDS_DEFAULT,
+        "--settle",
+        help="Seconds to let telemetry establish after injecting.",
+    ),
+    output: str = typer.Option("", "--output", "-o", help="Where to write the results JSON."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Print the plan and its cost exposure, then stop."
+    ),
+) -> None:
+    """Evaluate sev0 across the scenario suite, reproducibly.
+
+    Each trial restores the storefront before it injects and again after,
+    so a scenario that fails to clean up cannot silently become part of the
+    next one's measurement.
+    """
+    settings = load_settings()
+    selected = _select_scenarios(scenario_ids, family)
+    mode_list = tuple(m.strip() for m in modes.split(",") if m.strip())
+    total = len(selected) * len(mode_list) * runs
+
+    console.print(
+        f"[bold]{len(selected)}[/bold] scenarios x [bold]{len(mode_list)}[/bold] modes "
+        f"x [bold]{runs}[/bold] runs = [bold]{total}[/bold] trials, "
+        f"model {settings.model}"
+    )
+
+    if dry_run:
+        table = Table(title="Benchmark plan")
+        table.add_column("Scenario", style="bold")
+        table.add_column("Family")
+        table.add_column("Alert")
+        table.add_column("Modes")
+        for scenario in selected:
+            table.add_row(scenario.id, scenario.family, scenario.alert, ", ".join(mode_list))
+        console.print(table)
+        console.print(
+            "\n[yellow]Dry run.[/yellow] Nothing was injected and no model was called."
+        )
+        return
+
+    def prepare(scenario: model.Scenario) -> None:
+        _restore_quietly()
+        _inject_quietly(scenario)
+        if settle:
+            console.print(f"  settling {settle}s ...")
+            time.sleep(settle)
+
+    def cleanup(_: model.Scenario) -> None:
+        _restore_quietly()
+
+    def investigate(scenario: model.Scenario, run_mode: str, trial: int) -> Score:
+        console.print(f"  {scenario.id} [{run_mode} #{trial}] ...")
+        trace = _run_investigation(scenario, run_mode, trial, settings)
+        state = RunState.load(trace)
+        return score_run(state, scenario)
+
+    result = bench.execute(
+        scenarios=selected,
+        modes=mode_list,
+        runs_per_scenario=runs,
+        model=settings.model,
+        sev0_commit=bench.sev0_revision(REPO_ROOT),
+        investigate=investigate,
+        prepare=prepare,
+        cleanup=cleanup,
+        on_event=lambda message: console.print(f"  [yellow]{message}[/yellow]"),
+    )
+
+    stamp = result.started_at.replace(":", "").replace("-", "")
+    destination = Path(output) if output else BENCHMARK_DIR / f"{stamp}.json"
+    result.save(destination)
+
+    report_path = destination.with_suffix(".md")
+    report_path.write_text(bench.report(result))
+
+    console.print(bench.report(result))
+    console.print(f"Results written to {destination}")
+    console.print(f"Report written to {report_path}")
+
+
+def _select_scenarios(scenario_ids: str, family: str) -> list[model.Scenario]:
+    scenarios = model.load_all()
+    wanted = [s.strip() for s in scenario_ids.split(",") if s.strip()]
+
+    if wanted:
+        unknown = [s for s in wanted if s not in scenarios]
+        if unknown:
+            console.print(f"[red]Unknown scenarios:[/red] {', '.join(unknown)}")
+            raise typer.Exit(code=1)
+        selected = [scenarios[s] for s in wanted]
+    else:
+        selected = list(scenarios.values())
+
+    if family:
+        selected = [s for s in selected if s.family == family]
+        if not selected:
+            console.print(f"[red]No scenarios in family {family!r}.[/red]")
+            raise typer.Exit(code=1)
+
+    return selected
+
+
+def _restore_quietly() -> None:
+    repo = ensure_target()
+    state = read_state()
+    target_repo.reset_to_baseline(repo)
+    clear_state()
+    if state.get("scenario"):
+        append_ledger(
+            {"at": datetime.now(UTC).isoformat(timespec="seconds"), "scenario": None}
+        )
+        try:
+            services = model.load(str(state["scenario"])).rebuild
+        except model.ScenarioError:
+            services = ()
+        compose("up", "-d", "--build", *services)
+
+
+def _inject_quietly(scenario: model.Scenario) -> None:
+    repo = ensure_target()
+    for change in scenario.changes:
+        for edit in change.edits:
+            edit.apply(repo)
+        commit_change(repo, change)
+
+    head = target_repo.head(repo)
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    write_state({"scenario": scenario.id, "commit": head.sha, "injected_at": now})
+    append_ledger({"at": now, "scenario": scenario.id, "commit": head.sha})
+
+    if scenario.rebuild:
+        compose("up", "-d", "--build", *scenario.rebuild)
+
+
+def _run_investigation(
+    scenario: model.Scenario, run_mode: str, trial: int, settings: object
+) -> Path:
+    """Shell out to `sev0 investigate` so the benchmark exercises the real path.
+
+    Calling the library directly would let the benchmark drift away from
+    what a person running the command actually gets, which is the one thing
+    a harness must not do.
+    """
+    before = {path.name for path in RUN_DIR.glob("*") if path.is_dir()}
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "sev0.cli",
+            "investigate",
+            "--incident",
+            scenario.alert,
+            "--mode",
+            run_mode,
+            "--scenario",
+            scenario.id,
+            "--trial",
+            str(trial),
+        ],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    after = {path.name for path in RUN_DIR.glob("*") if path.is_dir()}
+    fresh = sorted(after - before)
+    if not fresh:
+        raise RuntimeError(
+            f"investigate produced no run: {result.stderr.strip()[-400:] or 'no output'}"
+        )
+
+    return RUN_DIR / fresh[-1] / "run.json"
 
 
 @app.command()

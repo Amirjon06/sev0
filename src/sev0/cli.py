@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from sev0 import __version__
+from sev0.agent.baseline import StaticBaseline
+from sev0.agent.capabilities import MODES, Capabilities
+from sev0.agent.capabilities import mode as capability_mode
 from sev0.agent.loop import InvestigationLoop, build_brief
 from sev0.agent.state import RunState
 from sev0.agent.tools import Toolbox
@@ -15,6 +21,7 @@ from sev0.collectors.metrics import PrometheusCollector
 from sev0.config import Settings, anthropic_api_key, github_token, load_settings
 from sev0.git_ops import pull_request as pr
 from sev0.git_ops import repository as repo_ops
+from sev0.pricing import estimate_cost
 from sev0.sandbox.patch import PatchBuilder, PatchLimits
 from sev0.sandbox.runner import DockerSandbox, LocalSandbox, Sandbox
 
@@ -91,7 +98,12 @@ def _limits(settings: Settings) -> PatchLimits:
     )
 
 
-def _build_toolbox(state: RunState, settings: Settings, sandbox: Sandbox | None) -> Toolbox:
+def _build_toolbox(
+    state: RunState,
+    settings: Settings,
+    sandbox: Sandbox | None,
+    capabilities: Capabilities | None = None,
+) -> Toolbox:
     if not settings.target_repo.exists():
         console.print(
             f"[red]No repository at {settings.target_repo}.[/red] "
@@ -108,7 +120,37 @@ def _build_toolbox(state: RunState, settings: Settings, sandbox: Sandbox | None)
         ),
         sandbox=sandbox,
         limits=_limits(settings),
+        capabilities=capabilities,
     )
+
+
+BASELINE_MODE = "baseline-static"
+
+
+def _resolve_mode(name: str) -> tuple[Capabilities, bool]:
+    """Turn a mode name into capabilities, and say whether it is a baseline.
+
+    The baseline gets the same collectors the agent has, because its evidence
+    package is built with them. What it does not get is the loop, and that is
+    decided by which runner is used rather than by taking tools away.
+    """
+    if name == BASELINE_MODE:
+        return Capabilities(name=BASELINE_MODE, execution=False), True
+
+    try:
+        return capability_mode(name), False
+    except KeyError as exc:
+        console.print(f"[red]{exc}[/red] Or use {BASELINE_MODE}.")
+        raise typer.Exit(code=1) from None
+
+
+def _revision() -> str:
+    """The sev0 commit this run used, so the result can be reproduced."""
+    root = Path(__file__).resolve().parent.parent.parent
+    result = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
 def _build_client() -> object:
@@ -217,26 +259,57 @@ def investigate(
         "--local-sandbox",
         help="Run experiments on this machine when Docker is unavailable. Not isolated.",
     ),
+    run_mode: str = typer.Option(
+        "full",
+        "--mode",
+        help=f"Evaluation mode: {', '.join(sorted(MODES))}, or baseline-static.",
+    ),
+    scenario_id: str = typer.Option("", "--scenario", hidden=True),
+    trial: int = typer.Option(1, "--trial", hidden=True),
 ) -> None:
     """Investigate an incident and identify its root cause."""
     settings = load_settings()
-    state = RunState(incident=incident)
+    capabilities, is_baseline = _resolve_mode(run_mode)
+
+    state = RunState(
+        incident=incident,
+        model=settings.model,
+        mode=run_mode,
+        scenario=scenario_id,
+        trial=trial,
+        sev0_commit=_revision(),
+    )
     sandbox = _build_sandbox(settings, allow_local=local_sandbox)
-    toolbox = _build_toolbox(state, settings, sandbox)
+    toolbox = _build_toolbox(state, settings, sandbox, capabilities)
     client = _build_client()
 
-    console.print(f"Investigating [bold]{incident}[/bold] against {settings.target_repo}\n")
+    console.print(f"Investigating [bold]{incident}[/bold] against {settings.target_repo}")
+    if run_mode != "full":
+        console.print(f"[yellow]Mode:[/yellow] {run_mode}")
+    console.print()
 
-    loop = InvestigationLoop(
-        client=client,  # type: ignore[arg-type]
-        toolbox=toolbox,
-        state=state,
-        model=settings.model,
-        max_tool_calls=settings.max_tool_calls,
-    )
+    runner: InvestigationLoop | StaticBaseline
+    if is_baseline:
+        runner = StaticBaseline(
+            client=client,
+            toolbox=toolbox,
+            state=state,
+            model=settings.model,
+        )
+    else:
+        runner = InvestigationLoop(
+            client=client,  # type: ignore[arg-type]
+            toolbox=toolbox,
+            state=state,
+            model=settings.model,
+            max_tool_calls=settings.max_tool_calls,
+        )
 
     try:
-        loop.run(build_brief(incident, alert or None))
+        if isinstance(runner, StaticBaseline):
+            runner.run(incident)
+        else:
+            runner.run(build_brief(incident, alert or None))
     except KeyboardInterrupt:
         state.abandon("interrupted")
     except Exception as exc:  # noqa: BLE001 - the trace is worth more than the stack
@@ -246,6 +319,7 @@ def investigate(
         state.abandon(f"{type(exc).__name__}: {exc}")
         console.print(f"[red]The run failed:[/red] {exc}\n")
 
+    state.usage.cost_usd = estimate_cost(state.usage, settings.model)
     trace = state.save(settings.run_dir)
     console.print(state.summary())
     console.print(f"\nTrace written to {trace}")
