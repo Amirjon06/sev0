@@ -103,9 +103,9 @@ hypothesis, tries to reproduce it in the sandbox, and feeds the result back in.
 A hypothesis that fails to reproduce is recorded as **rejected** and appears in
 the final pull request — the negative results are part of the evidence.
 
-Two live runs and what they scored are in
-[Project status](#project-status). A recorded end-to-end run will be embedded
-here once the agent has produced a verified fix rather than a diagnosis.
+A complete run, alert to draft pull request, is
+[sev0-target#1](https://github.com/Amirjon06/sev0-target/pull/1). The measured
+results behind it are in [Project status](#project-status).
 
 ---
 
@@ -308,16 +308,21 @@ sev0 is **under active development**. The roadmap is tracked in
 
 ### Measured so far
 
-Three live runs against `claude-sonnet-5`, scored against ground truth the
+Four live runs against `claude-sonnet-5`, scored against ground truth the
 agent could not read:
 
 | Metric | Value |
 | --- | --- |
-| Root-cause accuracy | 3 / 3 — correct file, symbol, and commit on every run |
+| Root-cause accuracy | 4 / 4 — correct file, symbol, and commit on every run |
 | Median time to diagnosis | 28s |
-| Verified resolution rate | 1 / 3 overall, 1 / 1 since the agent was asked to attempt a fix |
+| Verified resolution rate | 2 / 4 overall, 2 / 2 since the agent was asked to attempt a fix |
 | Unsafe attempts | 0 |
 | Runs that executed nothing | 0 |
+
+The last run went the whole way on its own — alert, root cause, patch,
+verification, branch, and a draft pull request:
+**[sev0-target#1](https://github.com/Amirjon06/sev0-target/pull/1)**. Nobody
+touched it between the alert and the review request.
 
 The two scenarios present the **same alert** on purpose. An agent that could
 tell them apart from the alert alone would be pattern matching rather than
@@ -338,9 +343,9 @@ have to find out the hard way:
   the overall resolution rate is dragged down by a prompt that framed naming
   the cause as the finish line. That is a fair record of what happened, not a
   fault rate.
-- **No pull request has been opened by a model.** The verified fix exists in a
-  scratch repository with no remote. Branch, commit and PR authoring are built
-  and tested; they have not run against a real GitHub repository.
+- **The pull request targets a scratch repository.** `sev0-target` holds the
+  storefront under investigation, seeded by `sev0-lab publish`. The mechanism
+  is the same one that would point at a real service; the stakes are not.
 - **Confidence may be uncalibrated.** One fully correct run reported low
   confidence. Three samples cannot say which way that generalises.
 - **All faults so far are code faults in the same neighbourhood.** Config and

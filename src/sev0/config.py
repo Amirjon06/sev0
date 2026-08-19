@@ -82,6 +82,14 @@ def load_settings() -> Settings:
     return Settings()
 
 
+def github_token() -> str | None:
+    """The git hosting credential, or None if it was never set."""
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token or token.startswith("ghp_...") or token == "ghp_":
+        return None
+    return token
+
+
 def anthropic_api_key() -> str | None:
     """The provider credential, or None if it was never set."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()

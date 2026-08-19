@@ -15,6 +15,30 @@ Format:
 
 ---
 
+## 2026-08-19 — Alert to pull request, unattended
+
+**Tried:** The last unproven link. A verified fix was being committed to a local
+branch in a scratch repo with no remote, and the GitHub API cannot open a pull
+request for a branch it has never seen — so the final step was unreachable in
+practice while looking complete in the code.
+**Result:** sev0-target#1. Alert in, draft pull request out, nobody touching it
+in between. Correct root cause, verified fix, no unsafe attempts.
+**Decided:** the push URL is built per call and never written to .git/config. A
+token in a config file outlives the run that needed it and travels with any
+copy of the repository.
+**Caught while writing the test:** redaction was replacing the exact URL that
+had been sent, and git had already normalised the credential out of the message
+it returned — so the test failed on an assertion that looked like a bug and was
+actually pointing at a real weakness. Redaction now matches the credential
+pattern, which holds whatever form git chooses to echo back.
+**Decided:** push refuses the base branch and anything outside sev0/. The
+commit path already refused both; the push path is a second place the same
+mistake could be made, and the rule has to hold at every boundary rather than
+at the first one someone remembered.
+**Noted:** the target repository is scratch and gets rebuilt by `up --fresh`,
+so `sev0-lab publish` force-pushes. The local tree is the truth and the remote
+is a mirror of it.
+
 ## 2026-08-19 — The repair half, proven
 
 **Tried:** Both live runs had diagnosed and stopped. The prompt described

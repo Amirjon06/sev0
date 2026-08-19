@@ -15,6 +15,8 @@ from incident_lab import target as target_repo
 from incident_lab.scenarios import model
 from incident_lab.scoring import Score, Scorecard, score_run
 from sev0.agent.state import RunState
+from sev0.config import github_token, load_settings
+from sev0.git_ops import repository as repo_ops
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = REPO_ROOT / "incident_lab" / "app"
@@ -236,6 +238,48 @@ def inject(
     console.print(f"[red]Injected[/red] {scenario.id} as {head.sha}")
     console.print(f"Alert: [bold]{scenario.alert}[/bold]")
     console.print("Ground truth is recorded but not shown. Use `sev0-lab reveal` to see it.")
+
+
+@app.command()
+def publish(
+    repository: str = typer.Option(
+        "", "--repo", "-R", help="Destination as owner/name. Defaults to SEV0_REPO."
+    ),
+) -> None:
+    """Push the target repository to GitHub so pull requests have somewhere to go.
+
+    The target is scratch: `up --fresh` rebuilds it and its history is
+    synthetic. Publishing it is what lets a verified fix become a branch a
+    reviewer can actually open, and it force-pushes for the same reason --
+    the local tree is the truth and the remote is a mirror of it.
+    """
+    settings = load_settings()
+    destination = repository or settings.repo or ""
+    token = github_token()
+
+    if not destination or "/" not in destination:
+        console.print("[red]No destination.[/red] Set SEV0_REPO or pass --repo owner/name.")
+        raise typer.Exit(code=1)
+    if token is None:
+        console.print("[red]GITHUB_TOKEN is not set.[/red]")
+        raise typer.Exit(code=1)
+
+    repo = ensure_target()
+    url = repo_ops.remote_url(destination, token)
+    branch = target_repo.git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+
+    result = subprocess.run(
+        ["git", "push", "--force", url, f"{branch}:{settings.base_branch}"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        # The URL carries a token, so git's own message is not safe to print.
+        console.print(f"[red]Push failed.[/red] {result.stderr.replace(url, '<remote>').strip()}")
+        raise typer.Exit(code=1)
+
+    console.print(f"Published {branch} to [bold]{destination}[/bold] as {settings.base_branch}.")
 
 
 @app.command()

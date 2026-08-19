@@ -268,3 +268,47 @@ class TestOpeningOnGitHub:
 
         with pytest.raises(pr.PullRequestError, match="refusing"):
             pr.open_on_github(request, repository="owner/repo", token="fake")
+
+
+class TestPublishingABranch:
+    """What sev0 is allowed to push, and what it must never leak.
+
+    Pushing is the moment an agent's work leaves the machine, so the refusals
+    matter more than the happy path.
+    """
+
+    def test_the_base_branch_is_never_pushed(self, repo: Path) -> None:
+        # Pushing main is how a machine-authored change reaches production
+        # with nobody having reviewed it.
+        with pytest.raises(repo_ops.GitOpsError, match="refusing to push main"):
+            repo_ops.push_branch(repo, "main", "https://example.invalid/x.git")
+
+    def test_a_branch_outside_the_namespace_is_refused(self, repo: Path) -> None:
+        with pytest.raises(repo_ops.GitOpsError, match="outside sev0/"):
+            repo_ops.push_branch(repo, "hotfix/urgent", "https://example.invalid/x.git")
+
+    def test_a_failed_push_does_not_print_the_token(self, repo: Path) -> None:
+        # The push URL carries a credential. git echoes the remote back in its
+        # error, and that message goes to a terminal and into a run trace.
+        url = repo_ops.remote_url("owner/name", "ghp_supersecret")
+
+        with pytest.raises(repo_ops.GitOpsError) as caught:
+            repo_ops.push_branch(repo, "sev0/checkout-5xx-abc123", url)
+
+        assert "ghp_supersecret" not in str(caught.value)
+
+    def test_credentials_are_stripped_from_whatever_git_says(self) -> None:
+        # git reports the remote back in several forms and normalises some of
+        # them, so this matches the credential pattern rather than the exact
+        # URL that was sent.
+        noisy = "failed to push to 'https://x-access-token:ghp_secret@github.com/o/n.git'"
+
+        assert "ghp_secret" not in repo_ops.redact(noisy)
+        assert "<redacted>@github.com/o/n.git" in repo_ops.redact(noisy)
+
+    def test_the_remote_url_is_built_and_not_stored(self, repo: Path) -> None:
+        url = repo_ops.remote_url("owner/name", "tok")
+        assert url == "https://x-access-token:tok@github.com/owner/name.git"
+
+        config = (repo / ".git" / "config").read_text()
+        assert "tok" not in config

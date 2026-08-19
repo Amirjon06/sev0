@@ -31,9 +31,15 @@ class Commit:
     files: tuple[str, ...]
 
 
+def _run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+
+
 def git(repo: Path, *args: str) -> str:
-    result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+    result = _run(repo, *args)
     if result.returncode != 0:
+        # Deliberately not used for push: this message repeats the arguments,
+        # and a push URL carries a token.
         raise GitOpsError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout.strip()
 
@@ -119,6 +125,49 @@ def commit_fix(
 
 def diff_against(repo: Path, base_branch: str = "main") -> str:
     return git(repo, "diff", f"{base_branch}...HEAD")
+
+
+def remote_url(repository: str, token: str) -> str:
+    """An authenticated push URL for owner/name.
+
+    Built per call and never written to .git/config. A token in a config file
+    outlives the run that needed it and ends up in any copy of the repository.
+    """
+    return f"https://x-access-token:{token}@github.com/{repository}.git"
+
+
+def push_branch(repo: Path, branch: str, url: str, base_branch: str = "main") -> None:
+    """Publish a branch so a pull request can reference it.
+
+    Refuses the base branch. Pushing main is how an agent's change reaches
+    production without anyone reviewing it, which is the one outcome the whole
+    safety model exists to prevent.
+    """
+    if branch == base_branch:
+        raise GitOpsError(f"refusing to push {base_branch}")
+    if not branch.startswith(f"{BRANCH_PREFIX}/"):
+        raise GitOpsError(f"refusing to push a branch outside {BRANCH_PREFIX}/: {branch!r}")
+
+    result = _run(repo, "push", url, f"{branch}:{branch}")
+    if result.returncode != 0:
+        # The URL carries a token. Whatever git says about it does not go to
+        # a terminal, a log file, or a run trace.
+        raise GitOpsError(f"could not push {branch}: {redact(result.stderr.strip())}")
+
+
+# Matches the userinfo half of a URL: scheme://anything-that-is-not-a-slash@
+_CREDENTIAL = re.compile(r"(?<=://)[^/\s@]+@")
+
+
+def redact(message: str) -> str:
+    """Strip embedded credentials from anything git says.
+
+    Matching the credential pattern rather than the exact URL we sent. git
+    reports the remote back in several forms and normalises some of them, so
+    a message that happened to contain the token would slip past a
+    string replacement while looking like it had been handled.
+    """
+    return _CREDENTIAL.sub("<redacted>@", message)
 
 
 def abandon_branch(repo: Path, branch: str, base_branch: str = "main") -> None:

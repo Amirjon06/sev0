@@ -12,7 +12,7 @@ from sev0.agent.state import RunState
 from sev0.agent.tools import Toolbox
 from sev0.collectors.logs import LokiCollector
 from sev0.collectors.metrics import PrometheusCollector
-from sev0.config import Settings, anthropic_api_key, load_settings
+from sev0.config import Settings, anthropic_api_key, github_token, load_settings
 from sev0.git_ops import pull_request as pr
 from sev0.git_ops import repository as repo_ops
 from sev0.sandbox.patch import PatchBuilder, PatchLimits
@@ -178,6 +178,22 @@ def _raise_pull_request(state: RunState, settings: Settings) -> None:
 
     if not settings.repo:
         console.print("SEV0_REPO is not set, so nothing was opened on GitHub.")
+        return
+
+    token = github_token()
+    if token is None:
+        console.print("GITHUB_TOKEN is not set, so the branch stays local.")
+        return
+
+    try:
+        repo_ops.push_branch(
+            settings.target_repo,
+            commit.branch,
+            repo_ops.remote_url(settings.repo, token),
+            base_branch=settings.base_branch,
+        )
+    except repo_ops.GitOpsError as exc:
+        console.print(f"[yellow]Could not publish the branch:[/yellow] {exc}")
         return
 
     try:
