@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from incident_lab.cli import scenario_live_at
-from incident_lab.scenarios.model import GroundTruth, Scenario
+from incident_lab.scenarios.model import Change, GroundTruth, Scenario
 from incident_lab.scoring import Score, Scorecard, score_run
 from sev0.agent.state import Confidence, ProposedFix, RootCause, RunState
 
@@ -27,9 +27,13 @@ def scenario() -> Scenario:
         family="code",
         summary="An inactive code is unhandled.",
         alert="checkout-5xx",
-        commit_message="refactor(cart): Simplify the discount calculation",
-        author="Dana Whitfield <dana@storefront.example>",
-        edits=(),
+        changes=(
+            Change(
+                message="refactor(cart): Simplify the discount calculation",
+                author="Dana Whitfield <dana@storefront.example>",
+                edits=(),
+            ),
+        ),
         ground_truth=GroundTruth(
             service="cart",
             file="services/cart/main.py",
