@@ -1,0 +1,60 @@
+# Alerting rules for the storefront.
+#
+# Deployed by the platform team, not by service owners. Changing a threshold
+# here changes what pages someone at 3am, so it is reviewed separately from
+# application code and is out of bounds for automated repair.
+
+groups:
+  - name: storefront
+    rules:
+      - alert: checkout-5xx
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status=~"5.."}[5m]))
+          / sum(rate(http_requests_total{service="gateway"}[5m])) > 0.05
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: Checkout is failing for a meaningful share of shoppers
+
+      - alert: checkout-4xx
+        expr: |
+          sum(rate(http_requests_total{service="gateway",status=~"4.."}[5m]))
+          / sum(rate(http_requests_total{service="gateway"}[5m])) > 0.15
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: Checkout is rejecting an unusual share of requests
+
+      - alert: checkout-latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(http_request_duration_seconds_bucket{service="gateway"}[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Checkout p95 latency is above two seconds
+
+      - alert: pricing-anomaly
+        expr: |
+          sum(rate(storefront_order_cents_total{component="shipping"}[15m]))
+          / clamp_min(sum(rate(storefront_orders_total[15m])), 0.001) < 200
+        for: 10m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Average shipping charged per order has moved outside its band
+
+      - alert: payments-duplicate-charges
+        expr: |
+          sum(rate(storefront_charges_total{outcome="authorized"}[10m]))
+          / clamp_min(sum(rate(storefront_orders_total[10m])), 0.001) > 1.2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: More charges are being authorized than orders are being priced

@@ -17,7 +17,15 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from services.common import get_logger, instrument, service_url
+from services.common import (
+    ORDER_CENTS,
+    ORDERS,
+    env_flag,
+    env_int,
+    get_logger,
+    instrument,
+    service_url,
+)
 
 log = get_logger("cart")
 
@@ -48,6 +56,19 @@ SHIPPING_RATES: dict[str, int] = {
     "express": 1299,
 }
 DEFAULT_SHIPPING_SPEED = "standard"
+
+# Sales tax, in basis points so the rate is exact. Tax applies to goods after
+# any discount, and to shipping, which is what most jurisdictions expect.
+TAX_BASIS_POINTS = env_int("TAX_BASIS_POINTS", 875)
+
+# Promotions can be switched off wholesale during an incident. When disabled,
+# codes are accepted and ignored rather than rejected, because failing a
+# checkout over a discount is worse than not applying it.
+PROMOTIONS_ENABLED = env_flag("PROMOTIONS_ENABLED", True)
+
+# A single line cannot exceed this. Anything above it is a client bug or an
+# abusive request, and charging for it would be worse than refusing.
+MAX_LINE_QUANTITY = env_int("MAX_LINE_QUANTITY", 99)
 
 pool: ConnectionPool | None = None
 
@@ -100,6 +121,57 @@ def shipping_cents(payable_cents: int, speed: str | None) -> int:
     return SHIPPING_RATES.get(chosen, SHIPPING_RATES[DEFAULT_SHIPPING_SPEED])
 
 
+def merge_lines(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse repeat additions of the same product into one line.
+
+    Shoppers add the same thing twice constantly. Two rows of one each and one
+    row of two have to price identically, and a line that has grown past the
+    per-line cap is clamped rather than rejected — the shopper still gets an
+    order, just not an unbounded one.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+
+    for row in rows:
+        product_id = row["product_id"]
+        existing = merged.get(product_id)
+        if existing is None:
+            merged[product_id] = dict(row)
+            continue
+        existing["quantity"] += row["quantity"]
+
+    for line in merged.values():
+        line["quantity"] = min(line["quantity"], MAX_LINE_QUANTITY)
+
+    return list(merged.values())
+
+
+def tax_cents(taxable_cents: int) -> int:
+    """Tax owed on an amount, rounded to the nearest cent.
+
+    Rounds half up rather than truncating. Truncation over a day of orders
+    costs real money, and the direction of the error is always the same one.
+    """
+    if taxable_cents <= 0:
+        return 0
+    return (taxable_cents * TAX_BASIS_POINTS + 5000) // 10000
+
+
+def discount_cents(subtotal: int, promo_code: str | None) -> int:
+    """What a promotion code is worth on this subtotal.
+
+    An unknown code is worth nothing rather than being an error: stale codes
+    get pasted out of old emails every day and a checkout must survive them.
+    """
+    if not PROMOTIONS_ENABLED or not promo_code:
+        return 0
+
+    percent = PROMOTIONS.get(promo_code)
+    if percent is None:
+        return 0
+
+    return subtotal * percent // 100
+
+
 def compute_total(
     items: list[dict[str, Any]],
     promo_code: str | None,
@@ -107,31 +179,44 @@ def compute_total(
 ) -> dict[str, int]:
     """Compute the order total in cents.
 
-    Returns the subtotal, the discount applied, shipping, and the final total.
+    Returns the subtotal, the discount applied, shipping, tax, and the final
+    total. Shipping is judged on what is actually payable after the discount,
+    so an order discounted below the threshold owes delivery again.
     """
-    subtotal = sum(item["price_cents"] * item["quantity"] for item in items)
+    lines = merge_lines(items) if items and "product_id" in items[0] else list(items)
+    subtotal = sum(item["price_cents"] * item["quantity"] for item in lines)
 
-    discount_percent = PROMOTIONS.get(promo_code) if promo_code else None
-    discount = 0
-    if discount_percent is not None:
-        discount = subtotal * discount_percent // 100
+    discount = discount_cents(subtotal, promo_code)
+    payable = subtotal - discount
+    shipping = shipping_cents(payable, shipping_speed)
+    tax = tax_cents(payable + shipping)
 
-    shipping = shipping_cents(subtotal - discount, shipping_speed)
+    ORDERS.labels("true" if shipping == 0 else "false").inc()
+    ORDER_CENTS.labels("subtotal").inc(subtotal)
+    ORDER_CENTS.labels("discount").inc(discount)
+    ORDER_CENTS.labels("shipping").inc(shipping)
+    ORDER_CENTS.labels("tax").inc(tax)
 
     return {
         "subtotal_cents": subtotal,
         "discount_cents": discount,
         "shipping_cents": shipping,
-        "total_cents": subtotal - discount + shipping,
+        "tax_cents": tax,
+        "total_cents": payable + shipping + tax,
     }
 
 
 @app.post("/carts/{user_id}/items", status_code=201)
 async def add_item(user_id: str, payload: AddItem) -> dict[str, object]:
     async with httpx.AsyncClient(timeout=3.0) as client:
-        response = await client.get(f"{service_url('catalog')}/products/{payload.product_id}")
+        response = await client.get(
+            f"{service_url('catalog')}/products/{payload.product_id}",
+            params={"quantity": payload.quantity},
+        )
     if response.status_code == 404:
         raise HTTPException(status_code=404, detail="product not found")
+    if response.status_code == 409:
+        raise HTTPException(status_code=409, detail="insufficient stock")
     response.raise_for_status()
     product = response.json()
 
@@ -185,4 +270,7 @@ async def stats() -> dict[str, object]:
     return {
         "pool_max_size": p.max_size,
         "pool_min_size": p.min_size,
+        "promotions_enabled": PROMOTIONS_ENABLED,
+        "tax_basis_points": TAX_BASIS_POINTS,
+        "max_line_quantity": MAX_LINE_QUANTITY,
     }

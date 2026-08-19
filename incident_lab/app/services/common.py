@@ -37,6 +37,53 @@ IN_FLIGHT = Gauge(
     ["service"],
 )
 
+# Business metrics. A fault that produces a wrong number rather than an
+# exception leaves the HTTP metrics untouched, and without these there is no
+# signal at all for an entire class of real bug.
+ORDERS = Counter(
+    "storefront_orders_total",
+    "Orders priced, labelled by whether they qualified for free shipping",
+    ["free_shipping"],
+)
+
+ORDER_CENTS = Counter(
+    "storefront_order_cents_total",
+    "Money moved through pricing, by component",
+    ["component"],
+)
+
+CHARGES = Counter(
+    "storefront_charges_total",
+    "Charge attempts by outcome",
+    ["outcome"],
+)
+
+
+def env_int(name: str, default: int) -> int:
+    """Read an integer setting, falling back rather than crashing on nonsense.
+
+    A service that refuses to boot because someone typed a stray character into
+    a config value fails in a way nothing downstream can diagnose.
+    """
+    try:
+        return int(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+def env_flag(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 
 class JsonFormatter(logging.Formatter):
     """Emit one JSON object per line."""

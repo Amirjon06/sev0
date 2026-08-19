@@ -8,6 +8,10 @@ x-service: &service
     context: ../../runs/target
     dockerfile: Dockerfile
   restart: unless-stopped
+  # Tunables live in the target repository so a config change is a commit.
+  # Anything set inline below is wiring, not policy.
+  env_file:
+    - ../../runs/target/config/storefront.env
   environment: &service-env
     LOG_LEVEL: INFO
     CATALOG_URL: http://catalog:8001
@@ -50,8 +54,6 @@ services:
       SERVICE_MODULE: services.cart.main:app
       PORT: 8002
       DATABASE_URL: postgresql://storefront:storefront@postgres:5432/storefront
-      DB_POOL_MAX_SIZE: 10
-      DB_POOL_TIMEOUT: 5
     ports:
       - "8002:8002"
     depends_on:
@@ -67,7 +69,6 @@ services:
       SERVICE_NAME: payments
       SERVICE_MODULE: services.payments.main:app
       PORT: 8003
-      PAYMENTS_DECLINE_RATE: 0.02
     ports:
       - "8003:8003"
 
