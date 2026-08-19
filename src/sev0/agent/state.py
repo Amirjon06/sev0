@@ -73,6 +73,39 @@ class RootCause:
 
 
 @dataclass
+class Usage:
+    """What the run cost, as reported by the provider.
+
+    Every field here comes from a response the API actually returned. Cost is
+    the one derived number and it is only populated when a price for the model
+    is known; a plausible-looking figure nobody can check is worse than a
+    missing one, because it will end up in a table someone quotes.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    requests: int = 0
+    cost_usd: float | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def add(self, raw: Any) -> None:
+        """Fold one response's usage block in. Unknown shapes are ignored."""
+        if raw is None:
+            return
+
+        self.requests += 1
+        self.input_tokens += int(getattr(raw, "input_tokens", 0) or 0)
+        self.output_tokens += int(getattr(raw, "output_tokens", 0) or 0)
+        self.cache_read_tokens += int(getattr(raw, "cache_read_input_tokens", 0) or 0)
+        self.cache_write_tokens += int(getattr(raw, "cache_creation_input_tokens", 0) or 0)
+
+
+@dataclass
 class RunState:
     incident: str
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
@@ -83,6 +116,16 @@ class RunState:
     root_cause: RootCause | None = None
     proposed_fix: ProposedFix | None = None
     stopped_because: str | None = None
+
+    # How this run was configured. A result nobody can attribute to a model,
+    # a mode, and a revision of the code is not reproducible, and an
+    # unreproducible number does not belong in a table.
+    model: str = ""
+    mode: str = "full"
+    scenario: str = ""
+    trial: int = 1
+    sev0_commit: str = ""
+    usage: Usage = field(default_factory=Usage)
 
     @property
     def call_count(self) -> int:
@@ -144,6 +187,12 @@ class RunState:
             started_at=payload.get("started_at", ""),
             finished_at=payload.get("finished_at"),
             stopped_because=payload.get("stopped_because"),
+            model=payload.get("model", ""),
+            mode=payload.get("mode", "full"),
+            scenario=payload.get("scenario", ""),
+            trial=payload.get("trial", 1),
+            sev0_commit=payload.get("sev0_commit", ""),
+            usage=Usage(**payload.get("usage", {})),
         )
         state.tool_calls = [ToolCall(**call) for call in payload.get("tool_calls", [])]
         state.hypotheses = [

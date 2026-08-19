@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from sev0.agent.capabilities import Capabilities
 from sev0.agent.state import Confidence, ProposedFix, RootCause, RunState, Verdict
 from sev0.collectors import logs as log_collector
 from sev0.collectors import metrics as metric_collector
@@ -74,6 +75,7 @@ class Toolbox:
         sandbox: Sandbox | None = None,
         limits: PatchLimits | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        capabilities: Capabilities | None = None,
     ) -> None:
         self.state = state
         self.repo = Path(repo)
@@ -82,8 +84,13 @@ class Toolbox:
         self.sandbox = sandbox
         self.limits = limits or PatchLimits()
         self.now = now
+        self.capabilities = capabilities or Capabilities()
         self._history: GitHistoryCollector | None = None
-        self._tools = {tool.name: tool for tool in self._build()}
+        # Ablated tools are dropped rather than left in place returning
+        # refusals. A tool the model can see is a tool it will spend turns on.
+        self._tools = {
+            tool.name: tool for tool in self._build() if self.capabilities.allows(tool.name)
+        }
 
     @property
     def history(self) -> GitHistoryCollector:

@@ -11,28 +11,22 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from sev0.agent.capabilities import Capabilities
 from sev0.agent.state import RunState
 from sev0.agent.tools import Toolbox
 
-SYSTEM_PROMPT = """\
-You are an on-call software engineer diagnosing a production incident.
-
-You are given an alert and nothing else. Investigate using the tools until you
-can name the specific function that is failing and the commit that changed it.
-
-How to work:
-
-- Start with metrics to see the shape and size of the failure, then find when it
-  started. That timestamp bounds which commits are worth reading.
-- The service that reports errors is often not the service that caused them. A
-  gateway returning 500 may be faithfully relaying a failure from behind it.
-- Read logs for the failing service around the onset. Tracebacks and error
-  messages usually name the file and line directly.
+HISTORY_GUIDANCE = """\
 - Correlate against commits landing shortly before the onset. Read the actual
   patch, not just the subject line: commit messages describe intent, and the
-  bug is where intent and behaviour diverged.
-- Prefer reading a single function over a whole file.
+  bug is where intent and behaviour diverged. The most alarming commit is not
+  always the responsible one, and the newest is not either.
+"""
 
+RETRIEVAL_GUIDANCE = """\
+- Prefer reading a single function over a whole file.
+"""
+
+EXECUTION_SECTION = """\
 How to test what you think:
 
 You can run code. Use it. A hypothesis you have not executed is a guess, however
@@ -51,20 +45,18 @@ well it reads.
   the reviewer what the cause is not, and it is recorded either way. Try the
   smallest change that would make the observed failure impossible, and let the
   suite say whether you were right.
+"""
 
-How to reason:
+NO_EXECUTION_SECTION = """\
+What you cannot do:
 
-- Record each hypothesis before testing it, phrased so it could be shown false.
-- Record rejections too, with the evidence that ruled them out. A reviewer needs
-  to know what you considered and discarded, not only what you settled on.
-- Do not conclude on a plausible story. Conclude when you have run something that
-  demonstrates the failure, can point at the line responsible, and can explain
-  why the observed behaviour follows from it.
-- If the evidence does not support a specific symbol, say so rather than
-  guessing. An honest "I could not determine this" is more useful than a
-  confident wrong answer, because a wrong answer costs the reviewer their time
-  and their trust.
+You have no way to run code in this configuration. Nothing can be executed,
+reproduced, or verified, so every conclusion rests on reading alone. Say plainly
+in your reasoning that the cause was inferred rather than demonstrated, and
+weigh your confidence accordingly.
+"""
 
+FINISH_SECTION = """\
 How to finish:
 
 Naming the cause is half the job. The person reading this is on call, and a
@@ -79,9 +71,69 @@ The one case where concluding without a patch is right is when you cannot
 identify a specific change that would fix it. Then say so plainly. An honest "I
 found the cause but not the fix" is useful. Stopping at the diagnosis because it
 felt like the end is not.
+"""
 
+NO_FIX_FINISH_SECTION = """\
+How to finish:
+
+You cannot propose a verified fix in this configuration, so the deliverable is
+the diagnosis: the specific function responsible and why the observed behaviour
+follows from it.
+"""
+
+SYSTEM_PROMPT = f"""\
+You are an on-call software engineer diagnosing a production incident.
+
+You are given an alert and nothing else. Investigate using the tools until you
+can name the specific function that is failing and the commit that changed it.
+
+How to work:
+
+- Start with metrics to see the shape and size of the failure, then find when it
+  started. That timestamp bounds which commits are worth reading.
+- The service that reports errors is often not the service that caused them. A
+  gateway returning 500 may be faithfully relaying a failure from behind it.
+- Read logs for the failing service around the onset. Tracebacks and error
+  messages usually name the file and line directly. Not every failure raises:
+  a wrong number leaves the logs clean and moves a metric instead.
+{HISTORY_GUIDANCE}{RETRIEVAL_GUIDANCE}
+{EXECUTION_SECTION}
+How to reason:
+
+- Record each hypothesis before testing it, phrased so it could be shown false.
+- Record rejections too, with the evidence that ruled them out. A reviewer needs
+  to know what you considered and discarded, not only what you settled on.
+- Do not conclude on a plausible story. Conclude when you can point at the line
+  responsible and explain why the observed behaviour follows from it.
+- If the evidence does not support a specific symbol, say so rather than
+  guessing. An honest "I could not determine this" is more useful than a
+  confident wrong answer, because a wrong answer costs the reviewer their time
+  and their trust.
+
+{FINISH_SECTION}
 Call `conclude` exactly once, and last.
 """
+
+
+def system_prompt(capabilities: Capabilities | None = None) -> str:
+    """The prompt, with instructions for absent capabilities removed.
+
+    An ablation that leaves the prompt telling the model to run experiments it
+    has no tools for is not measuring the missing component, it is measuring
+    how many turns the model wastes discovering the tools are gone.
+    """
+    capabilities = capabilities or Capabilities()
+    prompt = SYSTEM_PROMPT
+
+    if not capabilities.execution:
+        prompt = prompt.replace(EXECUTION_SECTION, NO_EXECUTION_SECTION)
+        prompt = prompt.replace(FINISH_SECTION, NO_FIX_FINISH_SECTION)
+    if not capabilities.history:
+        prompt = prompt.replace(HISTORY_GUIDANCE, "")
+    if not capabilities.retrieval:
+        prompt = prompt.replace(RETRIEVAL_GUIDANCE, "")
+
+    return prompt
 
 
 class ModelResponse(Protocol):
@@ -149,7 +201,7 @@ class InvestigationLoop:
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=self.max_tokens,
-                system=SYSTEM_PROMPT,
+                system=system_prompt(self.toolbox.capabilities),
                 tools=self.toolbox.schemas(),
                 # A copy, not the list itself. Passing the live list means
                 # anything holding onto a request -- a recorder, a replay
@@ -157,6 +209,8 @@ class InvestigationLoop:
                 # rather than what was actually sent on that turn.
                 messages=list(messages),
             )
+
+            self.state.usage.add(getattr(response, "usage", None))
 
             blocks = [_block_to_dict(block) for block in response.content]
             messages.append({"role": "assistant", "content": blocks})
